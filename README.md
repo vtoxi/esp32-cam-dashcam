@@ -4,12 +4,13 @@ A modular, configuration-driven, distributed ESP32 vehicle dashcam, security, te
 and black-box platform — built for a Peugeot 2008 prototype install, designed to run on
 any vehicle.
 
-> **Status: Phase 1 — Generic Device Foundation.** Boot, device identity, persistent
-> versioned config, factory reset, diagnostics, and watchdog exist for both the gateway
-> and a generic node. **Not yet compiled/flashed** — no PlatformIO toolchain is
+> **Status: Phase 2 — BLE + Wi-Fi Provisioning.** Boot, device identity, persistent
+> versioned config, factory reset, diagnostics, watchdog (Phase 1), plus bounded Wi-Fi
+> connect with BLE and temporary-AP provisioning fallback (Phase 2) exist for both the
+> gateway and a generic node. **Not yet compiled/flashed** — no PlatformIO toolchain is
 > available in the environment this was written in. See
 > [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for phase status and what
-> needs bench verification before Phase 2.
+> needs bench verification before Phase 3.
 
 ## Overview
 
@@ -75,11 +76,15 @@ Arduino core for ESP32, built via PlatformIO (two environments: `gateway`, `node
 4. pio run -e node        # build the generic ESP32-CAM node image
 5. pio run -e gateway -t upload   # flash the gateway (adjust port if needed)
 6. pio run -e node -t upload      # flash a camera node (via FTDI, GPIO0 to GND while flashing)
-7. pio device monitor             # watch boot logs; try STATUS and FACTORY_RESET commands
+7. pio device monitor             # watch boot logs; try STATUS, FACTORY_RESET, PROVISION
 ```
 
-Provisioning (assigning a real name/role instead of the MAC-derived default) lands in
-Phase 2 — not yet implemented.
+On first boot (no saved Wi-Fi credentials), a device opens **both** BLE and a temporary
+Wi-Fi AP (`CarSentinel-Setup-<id>`) for provisioning. Connect to the AP and browse to
+`192.168.4.1`, or use a BLE GATT client, to set the Wi-Fi SSID/password, hostname,
+display name, and role; the device reboots into normal operation once submitted. Send
+`PROVISION` over serial at any time to clear saved Wi-Fi credentials and re-open
+provisioning without a full factory reset.
 
 ## Adding / Removing / Replacing a Camera
 
@@ -92,8 +97,10 @@ camera joins the ESP-NOW network — no source changes. See project specificatio
 
 All normal operational settings (node identity, sensors enabled, Wi-Fi, security mode,
 thresholds, storage retention, email, AI, OTA) are runtime-configurable — only
-board-level pin definitions require a firmware rebuild. Configuration schema and
-persistence land in Phase 1.
+board-level pin definitions require a firmware rebuild. Device identity/role persists in
+`/config/device.json`; Wi-Fi credentials persist separately in `/config/network.json` so
+they can be cleared independently (Phase 1/2). Both are versioned with a `schemaVersion`
+field and a migration seam for future firmware updates (Section 39).
 
 ## OTA
 

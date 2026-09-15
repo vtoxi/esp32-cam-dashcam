@@ -1,9 +1,11 @@
-// CarSentinel generic Node (camera/sensor/display) — Phase 1 generic boot flow.
+// CarSentinel generic Node — Phase 1 (device foundation) + Phase 2 (BLE/Wi-Fi
+// provisioning).
 //
-// Same Phase 1 scope as gateway_main.cpp: identity, persistent versioned config,
-// factory reset, diagnostics, watchdog, logging. No camera/SD/RCWL/DHT yet (Phase 3+) —
-// this file proves a single generic node image boots and identifies itself without any
-// per-camera-position source code, which every later phase builds on.
+// Same boot flow as gateway_main.cpp (see comments there) with a NODE identity prefix
+// and UNASSIGNED default role. Wi-Fi/provisioning state must never gate anything
+// security-critical once Phase 4 adds local capture/motion logic to loop() — that is
+// why WiFiManager::connectBlocking() is bounded and provisioning mode runs entirely
+// inside loop() rather than blocking it going forward.
 
 #include <Arduino.h>
 #include "Logger.h"
@@ -11,12 +13,34 @@
 #include "DeviceIdentity.h"
 #include "Diagnostics.h"
 #include "Watchdog.h"
+#include "NetworkConfig.h"
+#include "WiFiManager.h"
+#include "ProvisioningPortal.h"
+#include "BLEProvisioning.h"
 
 using namespace CarSentinel;
 
 static const char* TAG = "Node";
 static unsigned long lastDiagnosticsLog = 0;
 static const unsigned long DIAGNOSTICS_INTERVAL_MS = 30000;
+static bool provisioningMode = false;
+
+static void enterProvisioningMode() {
+    provisioningMode = true;
+    const DeviceConfigData& dev = DeviceConfig::get();
+    String suffix = dev.nodeId.substring(dev.nodeId.length() >= 6 ? dev.nodeId.length() - 6 : 0);
+    String apSsid = "CarSentinel-Setup-" + suffix;
+
+    Logger::info(TAG, "Entering provisioning mode (BLE + AP): " + apSsid);
+    ProvisioningPortal::begin(apSsid);
+    BLEProvisioning::begin(apSsid);
+}
+
+static void restartInto(const char* reason) {
+    Logger::warn(TAG, String("Restarting: ") + reason);
+    delay(200);
+    ESP.restart();
+}
 
 static void handleSerialCommands() {
     if (!Serial.available()) {
@@ -24,57 +48,90 @@ static void handleSerialCommands() {
     }
     String line = Serial.readStringUntil('\n');
     line.trim();
+
     if (line == "FACTORY_RESET") {
         Logger::warn(TAG, "FACTORY_RESET command received via serial");
         DeviceConfig::factoryReset("NODE", DeviceRole::UNASSIGNED);
-        Logger::info(TAG, "Factory reset complete, restarting");
-        delay(200);
-        ESP.restart();
+        NetworkConfig::clearCredentials();
+        restartInto("factory reset complete");
+    } else if (line == "PROVISION") {
+        Logger::warn(TAG, "PROVISION command received via serial — clearing Wi-Fi credentials");
+        NetworkConfig::clearCredentials();
+        restartInto("re-entering provisioning");
     } else if (line == "STATUS") {
         const DeviceConfigData& cfg = DeviceConfig::get();
+        const NetworkConfigData& net = NetworkConfig::get();
         Logger::info(TAG, "nodeId=" + cfg.nodeId + " displayName=" + cfg.displayName +
                      " role=" + String(roleToString(cfg.role)) +
                      " hardwareProfile=" + cfg.hardwareProfile +
                      " firmwareVersion=" + cfg.firmwareVersion +
                      " mac=" + DeviceIdentity::macAddress());
+        Logger::info(TAG, "wifi: hasCredentials=" + String(NetworkConfig::hasCredentials() ? "true" : "false") +
+                     " connected=" + String(WiFiManager::isConnected() ? "true" : "false") +
+                     " ip=" + (WiFiManager::isConnected() ? WiFiManager::localIP() : String("-")) +
+                     " ssid=" + net.ssid);
         Diagnostics::logSnapshot(TAG);
     }
 }
 
 void setup() {
     Serial.begin(115200);
-    delay(200);  // let USB-serial settle before first log line
+    delay(200);
 
     Logger::begin(LogLevel::INFO);
     Logger::info(TAG, "CarSentinel Node booting, firmware=" CARSENTINEL_FIRMWARE_VERSION);
 
     Diagnostics::begin();
 
-    // Role starts UNASSIGNED, not CAMERA — a freshly flashed generic node has no
-    // predetermined role until BLE/AP provisioning (Phase 2) or manual config assigns
-    // one. This is the literal implementation of "hardware becomes configuration."
+    // Role starts UNASSIGNED — a freshly flashed generic node has no predetermined role
+    // until provisioning assigns one (this phase's BLE/AP form, or a manual edit).
     if (!DeviceConfig::begin("NODE", DeviceRole::UNASSIGNED)) {
         Logger::error(TAG, "DeviceConfig::begin failed — halting boot");
-        while (true) {
-            delay(1000);
-        }
+        while (true) { delay(1000); }
     }
 
     const DeviceConfigData& cfg = DeviceConfig::get();
     Logger::info(TAG, "Identity: nodeId=" + cfg.nodeId + " role=" +
                  String(roleToString(cfg.role)) + " mac=" + DeviceIdentity::macAddress());
 
-    Diagnostics::selfTest();
+    if (!NetworkConfig::begin(cfg.nodeId)) {
+        Logger::error(TAG, "NetworkConfig::begin failed — continuing without persisted Wi-Fi config");
+    }
 
+    Diagnostics::selfTest();
     Watchdog::begin(10);
 
-    Logger::info(TAG, "Boot complete. Serial commands: STATUS, FACTORY_RESET");
+    if (NetworkConfig::hasCredentials()) {
+        bool connected = WiFiManager::connectBlocking(NetworkConfig::get());
+        if (!connected) {
+            Logger::warn(TAG, "Saved Wi-Fi credentials failed to connect; opening provisioning");
+            enterProvisioningMode();
+        }
+    } else {
+        Logger::info(TAG, "No saved Wi-Fi credentials; opening provisioning");
+        enterProvisioningMode();
+    }
+
+    Logger::info(TAG, "Boot complete. Serial commands: STATUS, FACTORY_RESET, PROVISION");
     Diagnostics::logSnapshot(TAG);
 }
 
 void loop() {
     Watchdog::feed();
     handleSerialCommands();
+
+    if (provisioningMode) {
+        ProvisioningPortal::loop();
+        if (ProvisioningPortal::isSubmitted() || BLEProvisioning::isCommitted()) {
+            ProvisioningPortal::stop();
+            BLEProvisioning::stop();
+            restartInto("provisioning complete");
+        }
+    } else {
+        WiFiManager::loop();
+        // Local security/capture logic (Phase 4+) will run here unconditionally,
+        // independent of Wi-Fi/provisioning state — see Section 5 node independence.
+    }
 
     unsigned long now = millis();
     if (now - lastDiagnosticsLog >= DIAGNOSTICS_INTERVAL_MS) {

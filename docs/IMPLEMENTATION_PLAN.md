@@ -9,8 +9,8 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | Phase | Name | Status |
 |---|---|---|
 | 0 | Repository & Hardware Discovery | Complete |
-| 1 | Generic Device Foundation | **In progress** (this commit) |
-| 2 | BLE + Wi-Fi Provisioning | Not started |
+| 1 | Generic Device Foundation | Complete (pending bench verification) |
+| 2 | BLE + Wi-Fi Provisioning | **In progress** (this commit) |
 | 3 | Hardware Capability Layer | Not started |
 | 4 | Single Camera Node | Not started |
 | 5 | ESP-NOW | Not started |
@@ -97,7 +97,57 @@ behave as documented. Report any compile errors back — the `esp_task_wdt_confi
 in `Watchdog.cpp` in particular assumes a recent arduino-esp32 core (3.x / ESP-IDF 5.x)
 and may need adjusting for an older pinned platform version.
 
+## Phase 2 — BLE + Wi-Fi Provisioning
+
+**Implemented:**
+- `firmware/lib/CarSentinelCommon/NetworkConfig` — persistent Wi-Fi config on LittleFS
+  (`/config/network.json`), kept in a **separate file** from `device.json` on purpose:
+  factory reset / a bare "forget Wi-Fi" action can clear credentials without touching
+  node identity, and device-config diagnostic dumps never risk leaking a password
+  (Section 41 — no credentials in logs). Own `schemaVersion`/migrate seam, same pattern
+  as `DeviceConfig`.
+- `WiFiManager` — `connectBlocking()` tries saved credentials with a **bounded** retry
+  budget (`maxRetries × (connectTimeoutMs + retryIntervalMs)`, defaults to 3×20s ≈ 60s
+  worst case) — never blocks forever (Section 10). `loop()` does non-blocking drop
+  detection/reconnect during normal operation, rate-limited to once per 30s so it can
+  never stall time-critical logic added in later phases.
+- `ProvisioningPortal` — temporary SoftAP (`CarSentinel-Setup-<id>`) + a minimal
+  `WebServer` form (SSID/password/hostname/display name/role) at `192.168.4.1`, with a
+  captive-portal-style redirect on unknown paths. Blank password field on resubmit does
+  not overwrite a working saved password.
+- `BLEProvisioning` — NimBLE GATT service with **write-only** SSID/password
+  characteristics (never readable back over BLE — Section 9), read/write display
+  name/role, and a Commit characteristic that stages values and only persists them once
+  written (so a dropped connection mid-entry can't leave a half-configured device).
+- Both `gateway_main.cpp` and `node_main.cpp`: on boot, try saved credentials once
+  (bounded); on failure or no credentials, open **both** BLE and AP provisioning
+  concurrently and wait for either to receive a valid submission, then reboot. Added
+  `PROVISION` serial command (clears Wi-Fi credentials, restarts into provisioning) and
+  extended `FACTORY_RESET` to also clear network credentials (Section 40).
+- `configs/defaults/network_config.example.json`.
+
+**Not implemented (by design, later phases):** actual use of the Wi-Fi connection for
+anything (no NTP, no gateway sync, no email — those are Phase 5+ and later); BLE/AP
+provisioning of sensor-enable flags or hardware profile selection (Phase 3, once
+hardware profiles exist); static-IP field validation beyond a basic parse check.
+
+**Build status: not compiled.** Same toolchain gap as Phase 1 (no PlatformIO/Python
+available in this environment) — this code is written and self-reviewed, not built or
+flashed. Specific risks to check first when a toolchain is available:
+- `NimBLE-Arduino@^1.4.3` pinned in `platformio.ini`; `BLEProvisioning.cpp`'s
+  characteristic-callback code targets that version's `std::string`-based
+  `getValue()`/`setValue()` API. NimBLE-Arduino 2.x changed some of these signatures —
+  if PlatformIO resolves a newer version despite the pin, this is the first place to fix.
+- Running Wi-Fi AP + BLE advertising simultaneously on the **AI-Thinker ESP32-CAM**
+  (classic ESP32, shared radio, limited heap) is untested — it may be less stable there
+  than on the ESP32-S3 gateway. If bench testing shows problems, the fallback is to
+  offer BLE and AP sequentially (BLE first, AP only if BLE also fails) rather than
+  concurrently, on the node target specifically.
+- `WebServer.h`'s captive-portal redirect (`handleNotFound` → 302 to `/`) is a minimal
+  approach and won't trigger every OS's captive-portal auto-popup; manually browsing to
+  `192.168.4.1` always works as the documented fallback.
+
 ## Next Step
 
-Compile and bench-test Phase 1 on real hardware (see Build status above) before starting
-Phase 2 (BLE + Wi-Fi Provisioning).
+Compile and bench-test Phases 1–2 together on real hardware (both risks lists above)
+before starting Phase 3 (Hardware Capability Layer).

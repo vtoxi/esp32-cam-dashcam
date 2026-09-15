@@ -1,0 +1,13 @@
+# PlatformIO build artifacts
+firmware/.pio/
+firmware/.vscode/
+
+# Never commit real credentials — only .example.json templates belong in git
+configs/defaults/device_config.json
+configs/defaults/network_config.json
+*.env
+.env
+
+# OS/editor cruft
+.DS_Store
+Thumbs.db

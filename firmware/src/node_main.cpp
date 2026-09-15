@@ -265,6 +265,19 @@ void setup() {
         espNowActive = EspNowManager::begin(cfg.nodeId, roleToString(cfg.role));
     }
 
+    // Boot-summary line: the one thing worth grepping for in a serial log when you just
+    // want "what IP did this thing get" without hunting through the rest of the boot
+    // sequence.
+    if (provisioningMode) {
+        Logger::info(TAG, "NETWORK: provisioning AP active, connect to \"CarSentinel-" +
+                     cfg.nodeId + "\" and browse to 192.168.4.1 to configure Wi-Fi");
+    } else if (WiFiManager::isConnected()) {
+        Logger::info(TAG, "NETWORK: connected, IP=" + WiFiManager::localIP() +
+                     " ssid=" + NetworkConfig::get().ssid);
+    } else {
+        Logger::warn(TAG, "NETWORK: not connected (no IP) — Wi-Fi will keep retrying in the background");
+    }
+
     Logger::info(TAG, "Boot complete. Serial commands: STATUS, FACTORY_RESET, PROVISION, CAPTURE");
     Diagnostics::logSnapshot(TAG);
 }

@@ -83,6 +83,12 @@ void WiFiManager::loop() {
         return;  // never had credentials to reconnect with
     }
     if (WiFi.status() == WL_CONNECTED) {
+        if (state != WiFiConnState::CONNECTED) {
+            // Transitioned DISCONNECTED -> CONNECTED since the last check — a reconnect
+            // just succeeded (possibly with a new IP via DHCP), worth its own log line
+            // rather than only ever announcing the IP once at boot.
+            Logger::info(TAG, "Reconnected, IP=" + WiFi.localIP().toString());
+        }
         state = WiFiConnState::CONNECTED;
         return;
     }

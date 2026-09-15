@@ -21,6 +21,8 @@
 #include "CapabilitiesConfig.h"
 #include "I2CBusManager.h"
 #include "GpsUart.h"
+#include "EspNowManager.h"
+#include "PeerRegistry.h"
 
 using namespace CarSentinel;
 
@@ -30,6 +32,15 @@ static const unsigned long DIAGNOSTICS_INTERVAL_MS = 30000;
 static const unsigned long GPS_CHECK_INTERVAL_MS = 10000;
 static unsigned long lastGpsCheck = 0;
 static bool provisioningMode = false;
+static bool espNowActive = false;
+
+// Phase 5 scope: log receipt clearly. Correlating this into an actual incident record
+// (Section 55/11) with GPS/IMU/multi-camera evidence is Phase 7/11 — this just proves
+// the gateway reliably hears camera nodes over ESP-NOW.
+static void onEspNowMessage(const EspNowMessage& msg, const uint8_t mac[6]) {
+    Logger::info(TAG, "Security event from " + msg.senderNodeId + ": " +
+                 String(messageTypeToString(msg.type)) + " " + msg.payload);
+}
 
 static const uint8_t MPU6050_I2C_ADDR = 0x68;
 static const uint8_t SSD1306_I2C_ADDR = 0x3C;
@@ -127,6 +138,12 @@ static void handleSerialCommands() {
                      " ssid=" + net.ssid);
         Logger::info(TAG, "capabilities: gps=" + String(caps.gps) + " imu=" + String(caps.imu) +
                      " display=" + String(caps.display) + "(" + String(caps.displayCount) + ")");
+        Logger::info(TAG, "espnow.active=" + String(espNowActive) + " peers=" + String(PeerRegistry::count()));
+        for (uint8_t i = 0; i < PeerRegistry::count(); i++) {
+            PeerInfo* p = PeerRegistry::get(i);
+            Logger::info(TAG, "  peer[" + String(i) + "]: " + p->nodeId + " role=" + p->role +
+                         " lastSeenMsAgo=" + String(millis() - p->lastSeenMs));
+        }
         Diagnostics::logSnapshot(TAG);
     }
 }
@@ -169,6 +186,13 @@ void setup() {
         enterProvisioningMode();
     }
 
+    if (!provisioningMode) {
+        espNowActive = EspNowManager::begin(cfg.nodeId, roleToString(cfg.role));
+        if (espNowActive) {
+            EspNowManager::setOnMessageHandler(onEspNowMessage);
+        }
+    }
+
     Logger::info(TAG, "Boot complete. Serial commands: STATUS, FACTORY_RESET, PROVISION");
     Diagnostics::logSnapshot(TAG);
 }
@@ -186,6 +210,9 @@ void loop() {
         }
     } else {
         WiFiManager::loop();
+        if (espNowActive) {
+            EspNowManager::loop();
+        }
     }
 
     unsigned long now = millis();

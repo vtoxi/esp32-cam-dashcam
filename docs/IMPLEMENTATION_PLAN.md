@@ -12,8 +12,8 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 1 | Generic Device Foundation | Complete (pending bench verification) |
 | 2 | BLE + Wi-Fi Provisioning | Complete (pending bench verification) |
 | 3 | Hardware Capability Layer | Complete (pending bench verification) |
-| 4 | Single Camera Node | Compiles clean (both envs) — pending physical hardware bench test |
-| 5 | ESP-NOW | Not started |
+| 4 | Single Camera Node | Compiles clean (both envs); node flashed and phase 4 code running on hardware — pending full functional bench test |
+| 5 | ESP-NOW | Compiles clean (both envs) — pending physical two-device bench test |
 | 6 | Dynamic Node Management | Not started |
 | 7 | Multi-Camera Correlation | Not started |
 | 8 | GPS | Not started |
@@ -255,8 +255,101 @@ capture quality, motion trigger accuracy, SD write reliability, BLE/AP provision
 end-to-end, Wi-Fi reconnect behavior). Compiling clean rules out toolchain/API mismatches
 but proves nothing about runtime correctness on the actual boards.
 
+**Real-hardware update:** the node was flashed via a CH340 USB-serial programmer board
+(RST/IO0 buttons, no DTR/RTS auto-reset). Uploads initially failed with a consistent
+"Invalid head of packet (0x08)" — traced (via esptool's verbose trace, not guesswork) to
+what looked like a TX/RX loopback signature, but turned out to be resolved by the user's
+own environment troubleshooting (closing whatever else held the port / a clean
+unplug-replug) rather than any code or wiring change. Also lowered `node`'s
+`upload_speed` to 115200 in `platformio.ini` as a standing reliability margin for this
+adapter. The naming fix in the section below (role-prefixed provisioning names) was
+applied and reflashed successfully after that.
+
+**Provisioning naming fix (applied after initial Phase 4 flash):** the AP/BLE setup name
+was `CarSentinel-Setup-<6-hex-chars>`, which doesn't indicate device type — a gateway and
+a node could produce visually similar names during a Wi-Fi/BLE scan. Changed to use the
+full role-prefixed nodeId (`CarSentinel-NODE-A1B2C3` / `CarSentinel-GATEWAY-A1B2C3`) in
+both `enterProvisioningMode()` functions.
+
+## Phase 5 — ESP-NOW
+
+**Implemented:**
+- `Transport` (Section 12) — abstract interface (`begin`, `sendTo`, `broadcastMessage`,
+  `registerPeer`, `removePeer`, `setReceiveCallback`); `EspNowManager` depends only on
+  this interface, never on `esp_now_*()` directly, so a future transport can be swapped
+  in without touching protocol/application code.
+- `EspNowTransport` — the (only, today) `Transport` implementation. Callback signatures
+  were taken directly from this toolchain's installed `esp_now.h`
+  (`framework-arduinoespressif32 3.20017.241212`), not assumed from newer ESP-IDF 5.x
+  docs — the older `void(*)(const uint8_t *mac_addr, const uint8_t *data, int data_len)`
+  form, consistent with the Watchdog API lesson from Phase 4's build-fix pass. Registers
+  the broadcast address as a peer at `begin()` (required before `esp_now_send()` can
+  target it).
+- `EspNowProtocol` (Section 11) — the full message-type vocabulary (`HELLO` through
+  `ERROR_MSG` — deliberately not named bare `ERROR`, having already been bitten once by
+  `Arduino.h`'s `#define DISPLAY`), a manually byte-serialized wire format (not a raw
+  struct cast, so ESP32 vs ESP32-S3 struct-padding differences can never cause a silent
+  mismatch), protocol versioning (a version byte, `decode()` rejects mismatches), and
+  HMAC-SHA256 (truncated to 8 bytes) message authentication via `EspNowSecurity`.
+- `EspNowSecurity` — a 32-byte pre-shared key persisted at `/config/espnow_psk.bin`,
+  defaulting to a **documented-insecure** compiled-in placeholder on first boot. The key
+  itself is never transmitted — only its HMAC output travels over the air (Section 41).
+  Known limitation, stated loudly in logs and code comments: every device ships with the
+  *same* default key until someone manually replaces that file on every device — there is
+  no key-distribution mechanism yet.
+- `PeerRegistry` — in-memory (not persisted — resets on reboot) tracking of peers heard
+  from, used for (a) monotonic-sequence duplicate/replay rejection and (b) discovering
+  the gateway's MAC by role from its heartbeat payload. Explicitly not Section 6's
+  persistent dynamic device registry (enable/disable/rename) — that's Phase 6, built on
+  top of this.
+- `EspNowManager` — sends a `HELLO`-equivalent `HEARTBEAT` broadcast immediately at boot
+  and every 20s carrying `{role, uptimeMs, freeHeap}`; `sendMessage()` auto-assigns
+  sequence numbers and, for unicast sends of ack-expecting types, tracks the send in a
+  small (4-slot) in-memory pending table with bounded retries (3 attempts, linear
+  backoff) — giving up and logging after that (no persistent offline queue yet, that's
+  Section 28/Phase 28). Received messages are deduplicated via `PeerRegistry`, auto-ACKed
+  if their type expects one, and dispatched to an app-registered handler.
+- `node_main.cpp`: a confirmed `MOTION_DETECTED` event now forwards to the gateway (by
+  MAC if already discovered via a heartbeat, otherwise broadcast as a best-effort
+  fallback) — `CAPTURE`'s manual test events stay local, matching that command's own
+  "local test" intent. ESP-NOW starts after Wi-Fi/provisioning settles (deferred while in
+  AP-mode provisioning — a known scope boundary, not attempted this phase) and runs
+  unconditionally in `loop()` once started.
+- `gateway_main.cpp`: registers a message handler that logs every received security event
+  clearly; `STATUS` now lists discovered peers.
+- Both `STATUS` commands report ESP-NOW active state, peer count, and (node only)
+  whether the gateway has been discovered yet.
+
+**Defined but not yet handled this phase** (vocabulary exists, behavior is later
+phases'): `PAIR_REQUEST`/`PAIR_RESPONSE` (Phase 6), `CONFIG_REQUEST`/`CONFIG_UPDATE`
+(Phase 6/19), `INCIDENT_START`/`UPDATE`/`END` (Phase 11), `TIME_SYNC` (Phase 57),
+`OTA_COMMAND` (Phase 14), `GPS_UPDATE`/`IMU_UPDATE`/`TEMPERATURE_UPDATE`/
+`HUMIDITY_UPDATE` (Phase 8/9 — the gateway has no sensors bench-verified yet to source
+these from). Received instances of these types are still ACKed (if applicable) and
+logged by the generic RX path, just not acted on.
+
+**Build status: compiles clean, both environments** (verified directly — RAM/Flash usage
+barely moved: node 19.1%/42.2%, gateway similar). **Not yet bench-tested with two
+physical devices actually talking to each other.**
+
+**Known limitations / risks to verify on hardware:**
+- ESP-NOW requires the STA/AP radio to be on a settled channel; once the gateway
+  connects to a real Wi-Fi router, ESP-NOW peers must be on that same channel. This
+  phase does not implement channel synchronization — if the gateway's router-assigned
+  channel differs from a node's, they may fail to hear each other. Untested; likely the
+  first real-world issue to surface.
+  ESP-NOW during provisioning (AP mode) is out of scope this phase (see above) — a
+  node stuck in provisioning never forwards events, by design, not by oversight.
+- Two-device delivery (send → receive → auto-ACK → pending-table resolution) has not
+  been observed end-to-end; the retry/backoff logic is logic-reviewed, not
+  bench-verified.
+- The default ESP-NOW PSK is identical across every device until manually changed —
+  acceptable for bench testing, not for any real deployment.
+
 ## Next Step
 
-Flash both images to real hardware and run the Phase 1–4 functional bench tests (BLE/AP
-provisioning, camera capture, SD evidence write, and — once RCWL/DHT GPIOs are
-bench-confirmed — the motion trigger pipeline) before starting Phase 5 (ESP-NOW).
+Flash both images and bench-test Phase 5 with two physical devices in range: confirm
+HELLO/HEARTBEAT discovery populates each other's peer table, confirm a node's motion
+event reaches the gateway and gets ACKed (check both `STATUS` outputs and the gateway's
+event-received log line), and confirm retry/give-up behavior by testing with the
+gateway powered off. Once that's solid, continue with Phase 6 (Dynamic Node Management).

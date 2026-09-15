@@ -26,6 +26,10 @@
 #include "CameraManager.h"
 #include "MotionEventEngine.h"
 #include "EvidenceManager.h"
+#include "EspNowManager.h"
+#include "PeerRegistry.h"
+
+#include <ArduinoJson.h>
 
 using namespace CarSentinel;
 
@@ -35,6 +39,7 @@ static const unsigned long DIAGNOSTICS_INTERVAL_MS = 30000;
 static const unsigned long DHT_READ_INTERVAL_MS = 5000;  // DHT11 min ~1s; 5s is comfortably above it
 static unsigned long lastDhtRead = 0;
 static bool provisioningMode = false;
+static bool espNowActive = false;
 static TemperatureHumidityReading lastDhtReading;  // used as event environment context
 
 static void enterProvisioningMode() {
@@ -72,6 +77,7 @@ static void captureAndRecordEvent(const String& eventType, const String& severit
         Logger::warn(TAG, "Evidence storage unavailable — event will only be logged, not saved");
     }
 
+    bool hasImage = false;
     if (CameraManager::isInitialized()) {
         camera_fb_t* fb = CameraManager::captureJpeg();
         if (fb) {
@@ -79,6 +85,7 @@ static void captureAndRecordEvent(const String& eventType, const String& severit
                 EvidenceManager::attachImage(eventId, fb->buf, fb->len);
             }
             Logger::info(TAG, "Captured JPEG: " + String(fb->len) + " bytes");
+            hasImage = true;
             CameraManager::returnFrame(fb);
         }
     } else {
@@ -86,8 +93,36 @@ static void captureAndRecordEvent(const String& eventType, const String& severit
     }
 
     Logger::info(TAG, "Event " + (eventId.isEmpty() ? String("(unsaved)") : eventId) +
-                 " type=" + eventType +
-                 " — local only (ESP-NOW/gateway sync lands Phase 5+)");
+                 " type=" + eventType);
+
+    // Only real security events get forwarded — the CAPTURE serial command's
+    // MANUAL_TEST events stay local, matching its own "manual test" intent.
+    if (eventType == "MOTION_DETECTED") {
+        if (!espNowActive) {
+            Logger::info(TAG, "ESP-NOW inactive (provisioning mode) — event remains local only");
+        } else {
+            JsonDocument doc;
+            doc["eventId"] = eventId.isEmpty() ? "unsaved" : eventId;
+            doc["severity"] = severity;
+            doc["hasImage"] = hasImage;
+            if (env.valid) {
+                doc["temperatureC"] = env.temperatureC;
+                doc["humidityPercent"] = env.humidityPercent;
+            }
+            String payload;
+            serializeJson(doc, payload);
+
+            uint8_t gatewayMac[6];
+            bool haveGateway = EspNowManager::findGatewayMac(gatewayMac);
+            bool sent = EspNowManager::sendMessage(EspNowMessageType::MOTION_DETECTED, payload,
+                                                    haveGateway ? gatewayMac : nullptr);
+            Logger::info(TAG, sent
+                ? (haveGateway ? "Forwarded event to gateway via ESP-NOW (awaiting ACK)"
+                                : "Gateway not yet discovered — broadcast event, no ACK tracked")
+                : "ESP-NOW forward failed — event remains local only (no persistent offline "
+                  "queue yet, Section 28/Phase 28)");
+        }
+    }
 }
 
 static void initHardwareCapabilities() {
@@ -174,6 +209,10 @@ static void handleSerialCommands() {
                      " sd.mounted=" + String(SdStorage::status().mounted) +
                      " evidence.available=" + String(EvidenceManager::isAvailable()) +
                      " rcwl.enabled=" + String(caps.rcwl) + " dht.enabled=" + String(caps.dht));
+        uint8_t gwMac[6];
+        bool haveGw = EspNowManager::findGatewayMac(gwMac);
+        Logger::info(TAG, "espnow.active=" + String(espNowActive) + " peers=" +
+                     String(PeerRegistry::count()) + " gatewayDiscovered=" + String(haveGw));
         Diagnostics::logSnapshot(TAG);
     }
 }
@@ -218,6 +257,14 @@ void setup() {
         enterProvisioningMode();
     }
 
+    // ESP-NOW needs a settled Wi-Fi radio mode (STA), which provisioning's AP mode
+    // conflicts with — deferred until provisioning mode isn't active. A node that stays
+    // in provisioning mode simply doesn't forward events over ESP-NOW yet; its local
+    // capture pipeline is unaffected either way (Section 5).
+    if (!provisioningMode) {
+        espNowActive = EspNowManager::begin(cfg.nodeId, roleToString(cfg.role));
+    }
+
     Logger::info(TAG, "Boot complete. Serial commands: STATUS, FACTORY_RESET, PROVISION, CAPTURE");
     Diagnostics::logSnapshot(TAG);
 }
@@ -235,6 +282,9 @@ void loop() {
         }
     } else {
         WiFiManager::loop();
+        if (espNowActive) {
+            EspNowManager::loop();
+        }
     }
 
     // Security/capture pipeline runs unconditionally — independent of

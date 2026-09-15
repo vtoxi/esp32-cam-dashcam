@@ -4,14 +4,15 @@ A modular, configuration-driven, distributed ESP32 vehicle dashcam, security, te
 and black-box platform — built for a Peugeot 2008 prototype install, designed to run on
 any vehicle.
 
-> **Status: Phase 4 — Single Camera Node.** Boot/identity/config (Phase 1), BLE+AP
-> provisioning (Phase 2), capability-gated hardware init (Phase 3), and a working
-> motion → confirm → capture → local-evidence pipeline make one ESP32-CAM node a
-> standalone security device with no gateway required. **Compiles clean for both targets**
-> with a real PlatformIO toolchain (three real bugs found and fixed in the process — see
-> `docs/IMPLEMENTATION_PLAN.md` Phase 4). **Not yet flashed/bench-tested on physical
-> hardware.** See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for phase
-> status.
+> **Status: Phase 5 — ESP-NOW.** Boot/identity/config (Phase 1), BLE+AP provisioning
+> (Phase 2), capability-gated hardware init (Phase 3), a working motion → confirm →
+> capture → local-evidence pipeline (Phase 4), and now node-to-gateway communication
+> over ESP-NOW with a Transport abstraction, message versioning, HMAC authentication,
+> sequence-number dedup, and ACK/retry (Phase 5). **Compiles clean for both targets.**
+> The node has been flashed and is running on real hardware; the gateway has not yet been
+> flashed, and no two-device ESP-NOW test has run yet. See
+> [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for full phase status and
+> known limitations.
 
 ## Overview
 

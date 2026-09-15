@@ -62,12 +62,82 @@ static void restartInto(const char* reason) {
     ESP.restart();
 }
 
+// Section 18: called when this node hears another camera's CAPTURE_REQUEST broadcast
+// (a peer's confirmed motion event) — grabs its own synchronized snapshot and reports
+// back to the gateway so it can correlate all responding cameras under one incident.
+// Deliberately lighter than captureAndRecordEvent(): no MotionEventEngine involvement
+// (this isn't this node's own motion trigger), no forwarding of a MOTION_DETECTED —
+// just capture, save locally, and tell the gateway.
+static void captureRelatedEvidence(const String& triggerNodeId, const String& triggerEventId) {
+    const DeviceConfigData& dev = DeviceConfig::get();
+
+    if (!CameraManager::isInitialized()) {
+        Logger::info(TAG, "CAPTURE_REQUEST from " + triggerNodeId + " but no camera available — skipping");
+        return;
+    }
+
+    EnvironmentReading env;
+    env.valid = lastDhtReading.valid;
+    env.temperatureC = lastDhtReading.temperatureC;
+    env.humidityPercent = lastDhtReading.humidityPercent;
+
+    String localEventId;
+    if (EvidenceManager::isAvailable()) {
+        localEventId = EvidenceManager::createEvent(dev.nodeId, "RELATED_CAPTURE", "INFO", env);
+    }
+
+    bool hasImage = false;
+    camera_fb_t* fb = CameraManager::captureJpeg();
+    if (fb) {
+        if (!localEventId.isEmpty()) {
+            EvidenceManager::attachImage(localEventId, fb->buf, fb->len);
+        }
+        hasImage = true;
+        Logger::info(TAG, "Synchronized capture for " + triggerNodeId + "/" + triggerEventId +
+                     ": " + String(fb->len) + " bytes");
+        CameraManager::returnFrame(fb);
+    }
+
+    if (!espNowActive) return;
+
+    JsonDocument doc;
+    doc["triggerNodeId"] = triggerNodeId;
+    doc["triggerEventId"] = triggerEventId;
+    doc["localEventId"] = localEventId.isEmpty() ? "unsaved" : localEventId;
+    doc["hasImage"] = hasImage;
+    String payload;
+    serializeJson(doc, payload);
+
+    uint8_t gatewayMac[6];
+    bool haveGateway = EspNowManager::findGatewayMac(gatewayMac);
+    EspNowManager::sendMessage(EspNowMessageType::CAPTURE_RESULT, payload,
+                                haveGateway ? gatewayMac : nullptr);
+}
+
 // Section 6: applies administrative commands the gateway sends via CONFIG_UPDATE
 // (see gateway_main.cpp's sendNodeCommand()). Payload is {"cmd":..., "value":...}.
 // EspNowManager has already auto-ACKed this message before the handler runs.
+//
+// Also handles Section 18's multi-camera correlation: a CAPTURE_REQUEST broadcast from
+// another camera that just confirmed motion.
 static void onEspNowMessage(const EspNowMessage& msg, const uint8_t mac[6]) {
+    if (msg.type == EspNowMessageType::CAPTURE_REQUEST) {
+        JsonDocument doc;
+        if (deserializeJson(doc, msg.payload) != DeserializationError::Ok) {
+            Logger::warn(TAG, "CAPTURE_REQUEST payload not valid JSON: " + msg.payload);
+            return;
+        }
+        String triggerNodeId = doc["triggerNodeId"] | "";
+        String triggerEventId = doc["triggerEventId"] | "";
+        if (triggerNodeId.isEmpty() || triggerNodeId == DeviceConfig::get().nodeId) {
+            return;  // malformed, or (shouldn't happen) our own broadcast
+        }
+        captureRelatedEvidence(triggerNodeId, triggerEventId);
+        return;
+    }
+
     if (msg.type != EspNowMessageType::CONFIG_UPDATE) {
-        return;  // other types (e.g. future INCIDENT_*) not yet handled on nodes
+        return;  // other types not yet handled on nodes
     }
 
     JsonDocument doc;
@@ -159,6 +229,17 @@ static void captureAndRecordEvent(const String& eventType, const String& severit
                                 : "Gateway not yet discovered — broadcast event, no ACK tracked")
                 : "ESP-NOW forward failed — event remains local only (no persistent offline "
                   "queue yet, Section 28/Phase 28)");
+
+            // Section 18: tell other cameras to grab a synchronized snapshot too, so the
+            // gateway can correlate multiple angles under one incident. Broadcast (not
+            // targeted at any specific peer) and best-effort — no ACK/retry tracking,
+            // consistent with how HELLO/HEARTBEAT broadcasts already work.
+            JsonDocument reqDoc;
+            reqDoc["triggerNodeId"] = dev.nodeId;
+            reqDoc["triggerEventId"] = eventId.isEmpty() ? "unsaved" : eventId;
+            String reqPayload;
+            serializeJson(reqDoc, reqPayload);
+            EspNowManager::sendMessage(EspNowMessageType::CAPTURE_REQUEST, reqPayload, nullptr);
         }
     }
 }

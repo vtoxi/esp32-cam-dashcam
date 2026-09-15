@@ -26,6 +26,7 @@
 #include "PeerRegistry.h"
 #include "DeviceRegistry.h"
 #include "MacAddress.h"
+#include "IncidentCorrelator.h"
 
 #include <ArduinoJson.h>
 
@@ -52,9 +53,10 @@ static void onEspNowHeartbeat(const EspNowMessage& msg, const uint8_t mac[6]) {
     DeviceRegistry::updateHealth(msg.senderNodeId, doc["freeHeap"] | 0, doc["uptimeMs"] | 0);
 }
 
-// Phase 5/6 scope: log receipt clearly and respect the registry's enabled flag.
-// Correlating this into an actual incident record (Section 55/11) with GPS/IMU/
-// multi-camera evidence is Phase 7/11.
+// Phase 5/6/7 scope: log receipt, respect the registry's enabled flag, and correlate
+// multi-camera responses (Section 18) into a lightweight in-memory incident via
+// IncidentCorrelator. The full persistent incident lifecycle/evidence association
+// (Section 11) is Phase 11, built on top of this.
 static void onEspNowMessage(const EspNowMessage& msg, const uint8_t mac[6]) {
     DeviceRegistryEntry* dev = DeviceRegistry::find(msg.senderNodeId);
     if (dev && !dev->enabled) {
@@ -65,6 +67,23 @@ static void onEspNowMessage(const EspNowMessage& msg, const uint8_t mac[6]) {
     }
     Logger::info(TAG, "Security event from " + msg.senderNodeId + ": " +
                  String(messageTypeToString(msg.type)) + " " + msg.payload);
+
+    if (msg.type == EspNowMessageType::MOTION_DETECTED) {
+        JsonDocument doc;
+        if (deserializeJson(doc, msg.payload) == DeserializationError::Ok) {
+            String eventId = doc["eventId"] | "unsaved";
+            IncidentCorrelator::startIncident(msg.senderNodeId, eventId);
+        }
+    } else if (msg.type == EspNowMessageType::CAPTURE_RESULT) {
+        JsonDocument doc;
+        if (deserializeJson(doc, msg.payload) == DeserializationError::Ok) {
+            String triggerNodeId = doc["triggerNodeId"] | "";
+            String triggerEventId = doc["triggerEventId"] | "";
+            if (!triggerNodeId.isEmpty()) {
+                IncidentCorrelator::addRelated(triggerNodeId, triggerEventId, msg.senderNodeId);
+            }
+        }
+    }
 }
 
 static const uint8_t MPU6050_I2C_ADDR = 0x68;
@@ -315,6 +334,7 @@ void setup() {
     }
 
     DeviceRegistry::begin();
+    IncidentCorrelator::begin();
 
     if (!provisioningMode) {
         espNowActive = EspNowManager::begin(cfg.nodeId, roleToString(cfg.role));
@@ -358,6 +378,7 @@ void loop() {
         WiFiManager::loop();
         if (espNowActive) {
             EspNowManager::loop();
+            IncidentCorrelator::loop();
         }
     }
 

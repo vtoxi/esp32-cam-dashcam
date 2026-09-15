@@ -15,7 +15,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 4 | Single Camera Node | Compiles clean (both envs); node flashed and phase 4 code running on hardware — pending full functional bench test |
 | 5 | ESP-NOW | Compiles clean (both envs) — pending physical two-device bench test |
 | 6 | Dynamic Node Management | Compiles clean (both envs) — pending physical two-device bench test |
-| 7 | Multi-Camera Correlation | Not started |
+| 7 | Multi-Camera Correlation | Compiles clean (both envs) — pending multi-device bench test |
 | 8 | GPS | Not started |
 | 9 | MPU6050 | Not started |
 | 10 | Driving / Parking Modes | Not started |
@@ -426,4 +426,59 @@ range: confirm auto-discovery populates `DEVICES` on the gateway, exercise every
 serial command (`RENAME`/`ENABLE`/`DISABLE`/`REMOVE`/`SETROLE`/`RESTART`/`RESET`) against
 a real node and confirm the expected effect on each side, and confirm a `DISABLE`d
 device's events are ignored while its heartbeats keep the registry entry's `lastSeenMs`
-fresh. Once that's solid, continue with Phase 7 (Multi-Camera Correlation).
+fresh.
+
+## Phase 7 — Multi-Camera Correlation
+
+**Implemented:**
+- Node: when its own RCWL trigger produces a confirmed `MOTION_DETECTED` (after
+  forwarding to the gateway as before), it now also broadcasts a `CAPTURE_REQUEST`
+  (`{"triggerNodeId":..., "triggerEventId":...}`) — Section 18's "FRONT → SECURITY_EVENT
+  → ESP-NOW broadcast → REAR, LEFT, RIGHT, INTERIOR."
+- Node: a new `captureRelatedEvidence()` handles a received `CAPTURE_REQUEST` from
+  another camera — captures its own JPEG (if it has a camera and one is initialized),
+  saves it locally as a `RELATED_CAPTURE` evidence event (Section 27 layout, same as any
+  other local event — this node's own SD gets its own record of participating), and
+  reports back to the gateway via `CAPTURE_RESULT`
+  (`{"triggerNodeId", "triggerEventId", "localEventId", "hasImage"}`). Deliberately
+  lighter-weight than the RCWL-trigger path: no `MotionEventEngine` involvement (this
+  isn't *this* node's own motion decision), no re-broadcast (no risk of a request storm).
+- Gateway: `IncidentCorrelator` (new, gateway-only, in-memory) — `MOTION_DETECTED` opens
+  an incident (`INCIDENT-000123`-style ID, sequential, not persisted), `CAPTURE_RESULT`
+  messages matching that trigger get appended to its `relatedNodeIds` list, and after an
+  8-second correlation window with no further activity the incident is closed and logged
+  as one consolidated summary line (`trigger=... related=[...]`) — the Section 18 "one
+  incident" behavior, without Phase 11's full lifecycle/persistence machinery.
+- Disabled-device gating (Phase 6) still applies before any of this — a `DISABLE`d
+  node's `MOTION_DETECTED`/`CAPTURE_RESULT` never reaches the correlator.
+
+**Deliberately NOT Phase 11:** no persisted incident records, no lifecycle states
+(DETECTED→CONFIRMING→ACTIVE→...→CLOSED), no GPS/IMU/DHT association beyond what
+`MOTION_DETECTED`'s payload already carried since Phase 4 (temperature/humidity from the
+*triggering* node only — related nodes' own DHT readings aren't currently attached, a
+gap Phase 11 could close), no storage retention/cleanup. `IncidentCorrelator`'s job is
+narrowly "prove multiple cameras' responses get grouped," which it does.
+
+**Known limitations / risks to verify on hardware:**
+- A `CAPTURE_RESULT` arriving after its incident's 8-second correlation window already
+  closed is logged as "no open incident found" and dropped — this is a real
+  Phase-7-scope limitation (a slow node, or one whose camera capture takes unusually
+  long, could miss the window), not a bug to silently paper over. Worth observing actual
+  timing with real hardware to see if 8 seconds is generous enough.
+- A node responds to a peer's `CAPTURE_REQUEST` immediately (no debounce needed — it's a
+  direct instruction, not a re-detection), while the *triggering* node's own event only
+  fires after Section 17's full RCWL debounce/confirmation window. So a related capture
+  can show up in the gateway's log before the trigger's own follow-up traffic settles —
+  intentional, but worth knowing when reading logs out of order.
+- Only `MOTION_DETECTED` triggers correlation right now; other event types in Section
+  11's vocabulary (`INTRUSION_DETECTED`, `IMPACT_DETECTED`) don't yet, since nothing
+  produces them yet (no IMU/GPS bench-verified — Phase 8/9).
+
+## Next Step
+
+Flash all firmware and bench-test Phase 7 with at least two camera nodes plus the
+gateway: trigger motion on one node's RCWL, confirm the other node's `CAPTURE_REQUEST`
+handling fires (check its own log for "Synchronized capture..." and its SD card for a
+new `RELATED_CAPTURE` event), and confirm the gateway logs a single consolidated
+`INCIDENT-...` summary naming both nodes. Once that's solid, continue with Phase 8
+(GPS).

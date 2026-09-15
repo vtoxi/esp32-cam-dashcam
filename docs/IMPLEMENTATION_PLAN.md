@@ -11,8 +11,8 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 0 | Repository & Hardware Discovery | Complete |
 | 1 | Generic Device Foundation | Complete (pending bench verification) |
 | 2 | BLE + Wi-Fi Provisioning | Complete (pending bench verification) |
-| 3 | Hardware Capability Layer | **In progress** (this commit) |
-| 4 | Single Camera Node | Not started |
+| 3 | Hardware Capability Layer | Complete (pending bench verification) |
+| 4 | Single Camera Node | **In progress** (this commit) |
 | 5 | ESP-NOW | Not started |
 | 6 | Dynamic Node Management | Not started |
 | 7 | Multi-Camera Correlation | Not started |
@@ -195,8 +195,44 @@ adds to the bench-test list:
   AI-Thinker's fixed SD slot wiring per public reference — not yet confirmed against the
   physical unit (see `docs/wiring/MICROSD.md`).
 
+## Phase 4 — Single Camera Node
+
+**Implemented:**
+- `CameraManager` — wraps `esp_camera` for the AI-Thinker OV2640 using the standard,
+  widely-published `CAMERA_MODEL_AI_THINKER` pin set (now documented per-signal in
+  `docs/wiring/ESP32_CAM.md`). PSRAM-aware: SVGA/2-buffer with PSRAM, VGA/1-buffer
+  without. Snapshot capture only (`captureJpeg()`/`returnFrame()`) — no continuous video,
+  per Section 14.
+- `MotionEventEngine` — Section 17's debounce/confirmation-window/cooldown state machine
+  on top of Phase 3's raw `MotionSensor` read: counts rising edges within a
+  `confirmationWindowMs` window, fires once `minimumEvents` is reached, then holds a
+  `cooldownSeconds` cooldown. Defaults match Section 17 exactly (3000ms/2/30s).
+- `EvidenceManager` — local evidence storage on SD per Section 27's directory layout
+  (`/security/events/<EVENT_ID>/event.json` + `image_001.jpg`) and a simplified Section
+  55 event schema (no GPS/IMU — camera nodes don't have those; no `relatedNodes` — no
+  ESP-NOW yet; timestamp is `uptimeMsAtEvent`, not wall-clock, since NTP is Phase 57).
+  Event IDs are a persisted sequential counter on SD, not time-based.
+- `node_main.cpp`: motion → confirm → capture JPEG → save event + image pipeline, running
+  unconditionally in `loop()` regardless of Wi-Fi/provisioning state. New `CAPTURE`
+  serial command for a manual test snapshot without needing a live motion trigger.
+
+**Not implemented (by design, later phases):** ESP-NOW event forwarding to the gateway
+(Phase 5+, `relatedNodes` stays empty and events stay purely local until then), storage
+retention/cleanup (Section 27's quota fields, Phase 11), full incident lifecycle states
+(Phase 11), burst capture (Section 14 mentions it; single-frame-per-event is enough to
+prove the pipeline).
+
+**Build status: not compiled.** Same toolchain gap as prior phases. New risks:
+- `esp_camera_init` with the AI-Thinker pin set — extremely standard, used by nearly
+  every public ESP32-CAM example, but still unverified on *this* physical unit.
+- PSRAM detection (`psramFound()`) determines frame size/buffer count — if this specific
+  board's PSRAM isn't enabled in the build config, camera init may fail outright rather
+  than gracefully degrade; worth an explicit bench check.
+- `SD_MMC` file API calls (`mkdir`, `open(..., FILE_WRITE)`, `parseInt()`) in
+  `EvidenceManager` are standard but untested here.
+
 ## Next Step
 
-Compile and bench-test Phases 1–3 together on real hardware (all risk lists above,
-especially the gateway's proposed I2C/UART pins and the still-unconfirmed ESP32-CAM
-RCWL/DHT GPIOs) before starting Phase 4 (Single Camera Node).
+Compile and bench-test Phases 1–4 together on real hardware — this is the first phase
+that actually needs a physical camera + SD card to validate meaningfully, so it's a
+natural point to stop and get a toolchain running before Phase 5 (ESP-NOW).

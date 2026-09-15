@@ -1,11 +1,12 @@
 // CarSentinel generic Node — Phase 1 (device foundation) + Phase 2 (BLE/Wi-Fi
-// provisioning) + Phase 3 (hardware capability layer).
+// provisioning) + Phase 3 (hardware capability layer) + Phase 4 (single camera node).
 //
-// Boot order matters here: hardware capabilities (SD/RCWL/DHT) are initialized BEFORE
-// Wi-Fi/provisioning, and polled in loop() unconditionally — regardless of
-// provisioning/Wi-Fi state — because Section 5 requires motion sensing and local
-// evidence capture to keep working even while a node is unprovisioned or mid-setup.
-// Camera presence is capability-flagged here but actual esp32-camera init is Phase 4.
+// Boot order: hardware capabilities (camera/SD/RCWL/DHT) initialize BEFORE
+// Wi-Fi/provisioning, and the motion→capture→evidence pipeline runs unconditionally in
+// loop() — regardless of provisioning/Wi-Fi state (Section 5 node independence). This
+// phase makes a single node a complete standalone security device: RCWL trigger (via
+// Phase 3's debounce-free raw read, now behind Phase 17's confirmation/cooldown state
+// machine) → JPEG snapshot → local evidence file (Section 27/55), no gateway required.
 
 #include <Arduino.h>
 #include "Logger.h"
@@ -22,6 +23,9 @@
 #include "SdStorage.h"
 #include "MotionSensor.h"
 #include "TemperatureHumiditySensor.h"
+#include "CameraManager.h"
+#include "MotionEventEngine.h"
+#include "EvidenceManager.h"
 
 using namespace CarSentinel;
 
@@ -31,6 +35,7 @@ static const unsigned long DIAGNOSTICS_INTERVAL_MS = 30000;
 static const unsigned long DHT_READ_INTERVAL_MS = 5000;  // DHT11 min ~1s; 5s is comfortably above it
 static unsigned long lastDhtRead = 0;
 static bool provisioningMode = false;
+static TemperatureHumidityReading lastDhtReading;  // used as event environment context
 
 static void enterProvisioningMode() {
     provisioningMode = true;
@@ -47,6 +52,39 @@ static void restartInto(const char* reason) {
     Logger::warn(TAG, String("Restarting: ") + reason);
     delay(200);
     ESP.restart();
+}
+
+static void captureAndRecordEvent(const String& eventType, const String& severity) {
+    const DeviceConfigData& dev = DeviceConfig::get();
+
+    EnvironmentReading env;
+    env.valid = lastDhtReading.valid;
+    env.temperatureC = lastDhtReading.temperatureC;
+    env.humidityPercent = lastDhtReading.humidityPercent;
+
+    String eventId;
+    if (EvidenceManager::isAvailable()) {
+        eventId = EvidenceManager::createEvent(dev.nodeId, eventType, severity, env);
+    } else {
+        Logger::warn(TAG, "Evidence storage unavailable — event will only be logged, not saved");
+    }
+
+    if (CameraManager::isInitialized()) {
+        camera_fb_t* fb = CameraManager::captureJpeg();
+        if (fb) {
+            if (!eventId.isEmpty()) {
+                EvidenceManager::attachImage(eventId, fb->buf, fb->len);
+            }
+            Logger::info(TAG, "Captured JPEG: " + String(fb->len) + " bytes");
+            CameraManager::returnFrame(fb);
+        }
+    } else {
+        Logger::warn(TAG, "Camera not initialized — event recorded without image");
+    }
+
+    Logger::info(TAG, "Event " + (eventId.isEmpty() ? String("(unsaved)") : eventId) +
+                 " type=" + eventType +
+                 " — local only (ESP-NOW/gateway sync lands Phase 5+)");
 }
 
 static void initHardwareCapabilities() {
@@ -66,11 +104,15 @@ static void initHardwareCapabilities() {
                  " dht=" + String(caps.dht) + "(gpio=" + String(caps.dhtGpio) + ")");
 
     if (caps.camera) {
-        Logger::info(TAG, "Camera capability present — esp32-camera init deferred to Phase 4");
+        if (!CameraManager::begin()) {
+            Logger::error(TAG, "Camera init failed — node continues without capture (Section 59)");
+        }
     }
 
     if (caps.sd) {
-        if (!SdStorage::begin()) {
+        if (SdStorage::begin()) {
+            EvidenceManager::begin();
+        } else {
             Logger::warn(TAG, "SD unavailable — continuing without local evidence storage (Section 59)");
         }
     } else {
@@ -79,6 +121,7 @@ static void initHardwareCapabilities() {
 
     if (caps.rcwl && caps.rcwlGpio != GPIO_UNCONFIGURED) {
         MotionSensor::begin(caps.rcwlGpio);
+        MotionEventEngine::begin(MotionEventConfig());  // Section 17 defaults
     } else {
         Logger::info(TAG, "RCWL capability disabled or GPIO unconfigured; skipping init "
                      "(enable via capabilities.json once a bench test confirms a free GPIO — "
@@ -108,6 +151,9 @@ static void handleSerialCommands() {
         Logger::warn(TAG, "PROVISION command received via serial — clearing Wi-Fi credentials");
         NetworkConfig::clearCredentials();
         restartInto("re-entering provisioning");
+    } else if (line == "CAPTURE") {
+        Logger::info(TAG, "CAPTURE command received via serial — manual test snapshot");
+        captureAndRecordEvent("MANUAL_TEST", "INFO");
     } else if (line == "STATUS") {
         const DeviceConfigData& cfg = DeviceConfig::get();
         const NetworkConfigData& net = NetworkConfig::get();
@@ -121,7 +167,9 @@ static void handleSerialCommands() {
                      " connected=" + String(WiFiManager::isConnected() ? "true" : "false") +
                      " ip=" + (WiFiManager::isConnected() ? WiFiManager::localIP() : String("-")) +
                      " ssid=" + net.ssid);
-        Logger::info(TAG, "sd.mounted=" + String(SdStorage::status().mounted) +
+        Logger::info(TAG, "camera.initialized=" + String(CameraManager::isInitialized()) +
+                     " sd.mounted=" + String(SdStorage::status().mounted) +
+                     " evidence.available=" + String(EvidenceManager::isAvailable()) +
                      " rcwl.enabled=" + String(caps.rcwl) + " dht.enabled=" + String(caps.dht));
         Diagnostics::logSnapshot(TAG);
     }
@@ -152,8 +200,8 @@ void setup() {
     Diagnostics::selfTest();
     Watchdog::begin(10);
 
-    // Hardware capabilities before Wi-Fi/provisioning: local sensing must not depend on
-    // network state (Section 5).
+    // Hardware capabilities before Wi-Fi/provisioning: local sensing/capture must not
+    // depend on network state (Section 5).
     initHardwareCapabilities();
 
     if (NetworkConfig::hasCredentials()) {
@@ -167,7 +215,7 @@ void setup() {
         enterProvisioningMode();
     }
 
-    Logger::info(TAG, "Boot complete. Serial commands: STATUS, FACTORY_RESET, PROVISION");
+    Logger::info(TAG, "Boot complete. Serial commands: STATUS, FACTORY_RESET, PROVISION, CAPTURE");
     Diagnostics::logSnapshot(TAG);
 }
 
@@ -186,20 +234,24 @@ void loop() {
         WiFiManager::loop();
     }
 
-    // Sensor polling runs unconditionally — independent of provisioning/Wi-Fi state
-    // (Section 5). Full debounce/cooldown/event pipeline lands in Phase 4; this is just
-    // proof the capability layer reads live hardware.
+    // Security/capture pipeline runs unconditionally — independent of
+    // provisioning/Wi-Fi state (Section 5).
     const CapabilitiesConfigData& caps = CapabilitiesConfig::get();
-    if (caps.rcwl && caps.rcwlGpio != GPIO_UNCONFIGURED && MotionSensor::isTriggered()) {
-        Logger::info(TAG, "RCWL: motion signal HIGH");
-    }
     unsigned long now = millis();
+
     if (caps.dht && caps.dhtGpio != GPIO_UNCONFIGURED && now - lastDhtRead >= DHT_READ_INTERVAL_MS) {
         lastDhtRead = now;
-        TemperatureHumidityReading r = TemperatureHumiditySensor::read();
-        if (r.valid) {
-            Logger::info(TAG, "DHT: temp=" + String(r.temperatureC, 1) + "C humidity=" +
-                         String(r.humidityPercent, 1) + "%");
+        lastDhtReading = TemperatureHumiditySensor::read();
+        if (lastDhtReading.valid) {
+            Logger::info(TAG, "DHT: temp=" + String(lastDhtReading.temperatureC, 1) + "C humidity=" +
+                         String(lastDhtReading.humidityPercent, 1) + "%");
+        }
+    }
+
+    if (caps.rcwl && caps.rcwlGpio != GPIO_UNCONFIGURED) {
+        bool raw = MotionSensor::isTriggered();
+        if (MotionEventEngine::update(raw)) {
+            captureAndRecordEvent("MOTION_DETECTED", "SUSPICIOUS");
         }
     }
 

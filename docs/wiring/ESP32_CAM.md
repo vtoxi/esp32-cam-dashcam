@@ -22,7 +22,21 @@ UART0, plus grounding GPIO0 during flash mode.
 
 | Function | GPIO | Notes |
 |---|---|---|
-| Camera (OV2640), all pins | GPIO 0, 5, 18, 19, 21, 22, 23, 25, 26, 27, 32, 34, 35, 36, 39 | Reserved by camera interface, not available for other peripherals. |
+| Camera (OV2640), all pins | GPIO 0, 5, 18, 19, 21, 22, 23, 25, 26, 27, 32, 34, 35, 36, 39 | Reserved by camera interface, not available for other peripherals. Per-signal mapping below (the standard, widely-published `CAMERA_MODEL_AI_THINKER` pin set used by Espressif's own esp32-camera examples — same status as the rest of this document: reference, not yet bench-verified against this specific unit). |
+
+**Per-signal camera pin mapping (used by `firmware/lib/CarSentinelCommon/CameraManager.cpp`):**
+
+| Signal | GPIO | Signal | GPIO |
+|---|---|---|---|
+| PWDN | 32 | Y5 | 21 |
+| RESET | -1 (not connected) | Y4 | 19 |
+| XCLK | 0 | Y3 | 18 |
+| SIOD (I2C SDA to OV2640) | 26 | Y2 | 5 |
+| SIOC (I2C SCL to OV2640) | 27 | VSYNC | 25 |
+| Y9 | 35 | HREF | 23 |
+| Y8 | 34 | PCLK | 22 |
+| Y7 | 39 | | |
+| Y6 | 36 | | |
 | microSD (1-bit SDMMC mode) | GPIO 2, 4, 12, 13, 14, 15 | Shared bus with camera flash LED on GPIO 4. |
 | Onboard flash LED | GPIO 4 | Conflicts with SD_DATA1 in 4-bit SD mode — project will use 1-bit SD mode. |
 | Onboard status LED (red) | GPIO 33 | Free for use if not needed as indicator. |

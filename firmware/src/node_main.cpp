@@ -62,6 +62,44 @@ static void restartInto(const char* reason) {
     ESP.restart();
 }
 
+// Section 6: applies administrative commands the gateway sends via CONFIG_UPDATE
+// (see gateway_main.cpp's sendNodeCommand()). Payload is {"cmd":..., "value":...}.
+// EspNowManager has already auto-ACKed this message before the handler runs.
+static void onEspNowMessage(const EspNowMessage& msg, const uint8_t mac[6]) {
+    if (msg.type != EspNowMessageType::CONFIG_UPDATE) {
+        return;  // other types (e.g. future INCIDENT_*) not yet handled on nodes
+    }
+
+    JsonDocument doc;
+    if (deserializeJson(doc, msg.payload) != DeserializationError::Ok) {
+        Logger::warn(TAG, "CONFIG_UPDATE payload not valid JSON: " + msg.payload);
+        return;
+    }
+    String cmd = doc["cmd"] | "";
+    String value = doc["value"] | "";
+
+    if (cmd == "RENAME") {
+        DeviceConfigData dev = DeviceConfig::get();
+        dev.displayName = value;
+        DeviceConfig::save(dev);
+        Logger::info(TAG, "Remote RENAME applied: displayName=" + value);
+    } else if (cmd == "SETROLE") {
+        DeviceConfigData dev = DeviceConfig::get();
+        dev.role = roleFromString(value);
+        DeviceConfig::save(dev);
+        Logger::info(TAG, "Remote SETROLE applied: role=" + String(roleToString(dev.role)));
+    } else if (cmd == "RESTART") {
+        restartInto("remote RESTART command from gateway");
+    } else if (cmd == "FACTORY_RESET") {
+        Logger::warn(TAG, "Remote FACTORY_RESET command from gateway");
+        DeviceConfig::factoryReset("NODE", DeviceRole::UNASSIGNED);
+        NetworkConfig::clearCredentials();
+        restartInto("remote factory reset complete");
+    } else {
+        Logger::warn(TAG, "Unknown remote command: " + cmd);
+    }
+}
+
 static void captureAndRecordEvent(const String& eventType, const String& severity) {
     const DeviceConfigData& dev = DeviceConfig::get();
 
@@ -263,6 +301,9 @@ void setup() {
     // capture pipeline is unaffected either way (Section 5).
     if (!provisioningMode) {
         espNowActive = EspNowManager::begin(cfg.nodeId, roleToString(cfg.role));
+        if (espNowActive) {
+            EspNowManager::setOnMessageHandler(onEspNowMessage);
+        }
     }
 
     // Boot-summary line: the one thing worth grepping for in a serial log when you just

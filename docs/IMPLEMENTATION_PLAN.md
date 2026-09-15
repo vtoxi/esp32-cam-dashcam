@@ -14,7 +14,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 3 | Hardware Capability Layer | Complete (pending bench verification) |
 | 4 | Single Camera Node | Compiles clean (both envs); node flashed and phase 4 code running on hardware — pending full functional bench test |
 | 5 | ESP-NOW | Compiles clean (both envs) — pending physical two-device bench test |
-| 6 | Dynamic Node Management | Not started |
+| 6 | Dynamic Node Management | Compiles clean (both envs) — pending physical two-device bench test |
 | 7 | Multi-Camera Correlation | Not started |
 | 8 | GPS | Not started |
 | 9 | MPU6050 | Not started |
@@ -346,10 +346,84 @@ physical devices actually talking to each other.**
 - The default ESP-NOW PSK is identical across every device until manually changed —
   acceptable for bench testing, not for any real deployment.
 
+**Also this session (not a phase, quality-of-life):** both firmware targets now log an
+explicit `NETWORK: connected, IP=...` line at the end of `setup()` (or the provisioning
+AP's address if unconfigured yet), and `WiFiManager::loop()` logs `Reconnected, IP=...`
+on recovery from a dropped connection — previously the IP was only visible via the
+`STATUS` command or by scrolling back through the boot log.
+
+## Phase 6 — Dynamic Node Management
+
+**Implemented:**
+- `DeviceRegistry` (gateway-only, Section 6) — persistent (`/config/device_registry.json`)
+  record of every node the gateway has heard from, distinct from Phase 5's
+  `PeerRegistry` (in-memory-only radio dedup state): this is the durable "devices I
+  manage" list. Auto-populated — a node's first HELLO/HEARTBEAT creates its entry
+  (`enabled=true`, `displayName` defaulting to `nodeId`) with **no code change and no
+  manual registration step**, which is the literal Section 70 "add a camera" workflow
+  minus the BLE/AP provisioning step (already done in Phase 2) and the physical
+  wiring/mounting.
+- `MacAddress` — tiny shared `macToString`/`macFromString` helpers (registry persistence
+  and remote-command dispatch both need to convert between the 6-byte form ESP-NOW uses
+  and the string form JSON/serial commands use).
+- Gateway `EspNowManager` gained a second callback, `setOnPeerHeartbeatHandler` —
+  separate from Phase 5's `setOnMessageHandler`, because that one deliberately skips
+  HELLO/HEARTBEAT (they're not "security events"), but the registry needs exactly those
+  to learn about new devices and their health (`freeHeap`, `uptimeMs` from the heartbeat
+  payload).
+- New gateway serial commands implementing Section 6's action list: `DEVICES` (list,
+  with live health from the last heartbeat), `RENAME <id> <name>`, `ENABLE <id>`,
+  `DISABLE <id>`, `REMOVE <id>`, `SETROLE <id> <role>`, `RESTART <id>`, `RESET <id>`.
+  `RENAME`/`SETROLE`/`RESTART`/`RESET` are forwarded to the node itself over ESP-NOW as a
+  `CONFIG_UPDATE` message (`{"cmd":..., "value":...}`) — a generic administrative-command
+  envelope, since Section 11's message vocabulary has no dedicated message type for
+  "restart" or "factory reset" specifically.
+- Node-side `CONFIG_UPDATE` handler (`node_main.cpp`): applies `RENAME` (updates its own
+  `displayName`), `SETROLE` (updates `role`), `RESTART` (`ESP.restart()`), and
+  `FACTORY_RESET` (same as the local `FACTORY_RESET` serial command, just triggered
+  remotely). The message is already auto-ACKed by `EspNowManager` before this handler
+  runs, so the gateway knows the command was delivered (though not necessarily that it
+  was *applied* successfully — no result-reporting message type exists yet for that).
+- **Disable is application-level, not radio-level**, and this is a real, documented
+  limitation, not an oversight: `DISABLE` sets a registry flag the gateway checks before
+  treating a node's events as significant (`onEspNowMessage` logs "ignoring event from
+  disabled device" and returns). It does **not** stop the node's radio transmissions or
+  remove it from ESP-NOW's peer list — broadcast heartbeats can't be selectively blocked
+  at the radio layer without abandoning the discovery mechanism. A disabled node keeps
+  running and keeps being heard; the gateway just stops caring about what it says.
+
+**Not implemented (by design, later phases):** "change hardware profile" and "update
+firmware" from Section 6's action list — the former doesn't make sense to change
+remotely (it describes the physical board, not a preference), the latter is Phase 14
+(OTA) outright. No result/acknowledgement message type exists for "did the remote
+command actually get applied" (vs. just "was the packet delivered," which ESP-NOW's ACK
+already confirms) — Phase 11's incident engine or a future CONFIG_RESULT message type
+would be the natural place to add that.
+
+**Build status: compiles clean, both environments** (verified directly — node
+19.1%/42.3%, essentially unchanged from Phase 5, since this phase mostly reused existing
+mechanisms). **Not yet bench-tested.**
+
+**Known limitations / risks to verify on hardware:**
+- Every `sendNodeCommand()` call requires the node to already be in the registry (i.e.
+  have sent at least one heartbeat) — there is no way to command a node the gateway
+  hasn't heard from yet, which is the correct behavior but worth confirming produces a
+  clear "unknown nodeId" message rather than a confusing failure.
+- `RENAME` updates the gateway's registry immediately but only *requests* the node update
+  its own `displayName` — if that ESP-NOW send fails (no retries beyond
+  `EspNowManager`'s existing bounded retry), the two can drift out of sync until the next
+  successful rename attempt. Not persisted/retried beyond what Phase 5 already does.
+- `REMOVE` only forgets the device gateway-side; because discovery is automatic, a
+  removed device reappears on its next heartbeat. This is almost certainly the right
+  behavior (matches Section 71's "disable/remove is a gateway action, the node keeps
+  operating independently") but is worth confirming matches actual expectations once
+  used for real, rather than assumed correct from re-reading the spec.
+
 ## Next Step
 
-Flash both images and bench-test Phase 5 with two physical devices in range: confirm
-HELLO/HEARTBEAT discovery populates each other's peer table, confirm a node's motion
-event reaches the gateway and gets ACKed (check both `STATUS` outputs and the gateway's
-event-received log line), and confirm retry/give-up behavior by testing with the
-gateway powered off. Once that's solid, continue with Phase 6 (Dynamic Node Management).
+Flash both images and bench-test Phases 5–6 together with two physical devices in
+range: confirm auto-discovery populates `DEVICES` on the gateway, exercise every new
+serial command (`RENAME`/`ENABLE`/`DISABLE`/`REMOVE`/`SETROLE`/`RESTART`/`RESET`) against
+a real node and confirm the expected effect on each side, and confirm a `DISABLE`d
+device's events are ignored while its heartbeats keep the registry entry's `lastSeenMs`
+fresh. Once that's solid, continue with Phase 7 (Multi-Camera Correlation).

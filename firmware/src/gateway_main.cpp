@@ -1,5 +1,6 @@
 // CarSentinel Gateway — Phase 1 (device foundation) + Phase 2 (BLE/Wi-Fi provisioning)
-// + Phase 3 (hardware capability layer).
+// + Phase 3 (hardware capability layer) + Phase 5 (ESP-NOW) + Phase 6 (dynamic node
+// management).
 //
 // Hardware capabilities (I2C buses for IMU/OLED, GPS UART) are initialized before
 // Wi-Fi/provisioning for the same reason as the node: they shouldn't depend on network
@@ -23,6 +24,10 @@
 #include "GpsUart.h"
 #include "EspNowManager.h"
 #include "PeerRegistry.h"
+#include "DeviceRegistry.h"
+#include "MacAddress.h"
+
+#include <ArduinoJson.h>
 
 using namespace CarSentinel;
 
@@ -34,10 +39,30 @@ static unsigned long lastGpsCheck = 0;
 static bool provisioningMode = false;
 static bool espNowActive = false;
 
-// Phase 5 scope: log receipt clearly. Correlating this into an actual incident record
-// (Section 55/11) with GPS/IMU/multi-camera evidence is Phase 7/11 — this just proves
-// the gateway reliably hears camera nodes over ESP-NOW.
+// Section 6: every HELLO/HEARTBEAT auto-populates/refreshes the persistent device
+// registry — this is what makes adding a node zero-code (the gateway learns about it
+// just by hearing from it) and lets DEVICES/health tracking work off live data.
+static void onEspNowHeartbeat(const EspNowMessage& msg, const uint8_t mac[6]) {
+    JsonDocument doc;
+    if (deserializeJson(doc, msg.payload) != DeserializationError::Ok) {
+        return;
+    }
+    String role = doc["role"] | "";
+    DeviceRegistry::upsertFromDiscovery(msg.senderNodeId, mac, role);
+    DeviceRegistry::updateHealth(msg.senderNodeId, doc["freeHeap"] | 0, doc["uptimeMs"] | 0);
+}
+
+// Phase 5/6 scope: log receipt clearly and respect the registry's enabled flag.
+// Correlating this into an actual incident record (Section 55/11) with GPS/IMU/
+// multi-camera evidence is Phase 7/11.
 static void onEspNowMessage(const EspNowMessage& msg, const uint8_t mac[6]) {
+    DeviceRegistryEntry* dev = DeviceRegistry::find(msg.senderNodeId);
+    if (dev && !dev->enabled) {
+        Logger::info(TAG, "Ignoring event from disabled device " + msg.senderNodeId +
+                     " (" + String(messageTypeToString(msg.type)) + ") — re-enable with "
+                     "ENABLE " + msg.senderNodeId);
+        return;
+    }
     Logger::info(TAG, "Security event from " + msg.senderNodeId + ": " +
                  String(messageTypeToString(msg.type)) + " " + msg.payload);
 }
@@ -63,6 +88,49 @@ static void restartInto(const char* reason) {
     Logger::warn(TAG, String("Restarting: ") + reason);
     delay(200);
     ESP.restart();
+}
+
+// Splits "COMMAND arg1 arg2..." into up to 3 space-separated tokens after the command
+// word itself. Good enough for this phase's serial commands; a real CLI parser isn't
+// warranted for a handful of admin commands.
+static void splitArgs(const String& line, String& arg1, String& arg2) {
+    int firstSpace = line.indexOf(' ');
+    if (firstSpace < 0) return;
+    String rest = line.substring(firstSpace + 1);
+    rest.trim();
+    int secondSpace = rest.indexOf(' ');
+    if (secondSpace < 0) {
+        arg1 = rest;
+    } else {
+        arg1 = rest.substring(0, secondSpace);
+        arg2 = rest.substring(secondSpace + 1);
+        arg2.trim();
+    }
+}
+
+// Sends a Section 6 administrative command to a node over ESP-NOW as a CONFIG_UPDATE
+// message ({"cmd":..., "value":...}) — the node applies it in its own onEspNowMessage
+// handler (see node_main.cpp). Requires the node to have been heard from at least once
+// (its MAC is only known via ESP-NOW discovery, never guessed).
+static bool sendNodeCommand(const String& nodeId, const String& cmd, const String& value) {
+    DeviceRegistryEntry* dev = DeviceRegistry::find(nodeId);
+    if (!dev) {
+        Logger::warn(TAG, "Unknown nodeId: " + nodeId + " (has it sent a heartbeat yet? see DEVICES)");
+        return false;
+    }
+    uint8_t mac[6];
+    if (!macFromString(dev->mac, mac)) {
+        Logger::error(TAG, "Stored MAC for " + nodeId + " is malformed: " + dev->mac);
+        return false;
+    }
+    JsonDocument doc;
+    doc["cmd"] = cmd;
+    if (!value.isEmpty()) doc["value"] = value;
+    String payload;
+    serializeJson(doc, payload);
+    bool sent = EspNowManager::sendMessage(EspNowMessageType::CONFIG_UPDATE, payload, mac);
+    Logger::info(TAG, (sent ? "Sent " : "Failed to send ") + cmd + " to " + nodeId);
+    return sent;
 }
 
 static void initHardwareCapabilities() {
@@ -145,6 +213,66 @@ static void handleSerialCommands() {
                          " lastSeenMsAgo=" + String(millis() - p->lastSeenMs));
         }
         Diagnostics::logSnapshot(TAG);
+    } else if (line == "DEVICES") {
+        // Section 6: the zero-code device list — every entry here got here by the
+        // gateway hearing an ESP-NOW heartbeat, not by editing a config file or
+        // reflashing anything.
+        Logger::info(TAG, "Device registry (" + String(DeviceRegistry::count()) + "):");
+        for (uint8_t i = 0; i < DeviceRegistry::count(); i++) {
+            DeviceRegistryEntry* d = DeviceRegistry::get(i);
+            unsigned long agoMs = d->lastSeenMs == 0 ? 0 : millis() - d->lastSeenMs;
+            Logger::info(TAG, "  " + d->nodeId + " \"" + d->displayName + "\" role=" + d->role +
+                         " mac=" + d->mac + " enabled=" + String(d->enabled) +
+                         " lastSeenMsAgo=" + String(agoMs) +
+                         " freeHeap=" + String(d->lastFreeHeap) +
+                         " uptimeMs=" + String(d->lastUptimeMs));
+        }
+    } else if (line.startsWith("RENAME ")) {
+        String nodeId, newName;
+        splitArgs(line, nodeId, newName);
+        if (nodeId.isEmpty() || newName.isEmpty()) {
+            Logger::warn(TAG, "Usage: RENAME <nodeId> <newDisplayName>");
+        } else {
+            bool ok = DeviceRegistry::rename(nodeId, newName);
+            Logger::info(TAG, ok ? "Renamed " + nodeId + " to \"" + newName + "\" (gateway-side)"
+                                  : "Unknown nodeId: " + nodeId);
+            if (ok) sendNodeCommand(nodeId, "RENAME", newName);  // keep the node's own displayName in sync
+        }
+    } else if (line.startsWith("ENABLE ")) {
+        String nodeId, unused;
+        splitArgs(line, nodeId, unused);
+        bool ok = DeviceRegistry::setEnabled(nodeId, true);
+        Logger::info(TAG, ok ? "Enabled " + nodeId : "Unknown nodeId: " + nodeId);
+    } else if (line.startsWith("DISABLE ")) {
+        String nodeId, unused;
+        splitArgs(line, nodeId, unused);
+        bool ok = DeviceRegistry::setEnabled(nodeId, false);
+        Logger::info(TAG, ok ? "Disabled " + nodeId + " — its events will be ignored, not its radio traffic"
+                              : "Unknown nodeId: " + nodeId);
+    } else if (line.startsWith("REMOVE ")) {
+        String nodeId, unused;
+        splitArgs(line, nodeId, unused);
+        bool ok = DeviceRegistry::remove(nodeId);
+        Logger::info(TAG, ok ? "Removed " + nodeId + " from the registry (the node itself keeps "
+                               "running independently — Section 5 — and will reappear here if it "
+                               "sends another heartbeat)"
+                              : "Unknown nodeId: " + nodeId);
+    } else if (line.startsWith("SETROLE ")) {
+        String nodeId, role;
+        splitArgs(line, nodeId, role);
+        if (nodeId.isEmpty() || role.isEmpty()) {
+            Logger::warn(TAG, "Usage: SETROLE <nodeId> <GATEWAY|CAMERA|SENSOR|DISPLAY|VEHICLE_CONTROLLER|UNASSIGNED>");
+        } else {
+            sendNodeCommand(nodeId, "SETROLE", role);
+        }
+    } else if (line.startsWith("RESTART ")) {
+        String nodeId, unused;
+        splitArgs(line, nodeId, unused);
+        sendNodeCommand(nodeId, "RESTART", "");
+    } else if (line.startsWith("RESET ")) {
+        String nodeId, unused;
+        splitArgs(line, nodeId, unused);
+        sendNodeCommand(nodeId, "FACTORY_RESET", "");
     }
 }
 
@@ -186,10 +314,13 @@ void setup() {
         enterProvisioningMode();
     }
 
+    DeviceRegistry::begin();
+
     if (!provisioningMode) {
         espNowActive = EspNowManager::begin(cfg.nodeId, roleToString(cfg.role));
         if (espNowActive) {
             EspNowManager::setOnMessageHandler(onEspNowMessage);
+            EspNowManager::setOnPeerHeartbeatHandler(onEspNowHeartbeat);
         }
     }
 
@@ -206,7 +337,9 @@ void setup() {
         Logger::warn(TAG, "NETWORK: not connected (no IP) — Wi-Fi will keep retrying in the background");
     }
 
-    Logger::info(TAG, "Boot complete. Serial commands: STATUS, FACTORY_RESET, PROVISION");
+    Logger::info(TAG, "Boot complete. Serial commands: STATUS, FACTORY_RESET, PROVISION, "
+                 "DEVICES, RENAME <id> <name>, ENABLE <id>, DISABLE <id>, REMOVE <id>, "
+                 "SETROLE <id> <role>, RESTART <id>, RESET <id>");
     Diagnostics::logSnapshot(TAG);
 }
 

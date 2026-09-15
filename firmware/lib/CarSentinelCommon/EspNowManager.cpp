@@ -23,6 +23,7 @@ uint32_t EspNowManager::nextSequenceNumber = 1;
 EspNowManager::PendingSend EspNowManager::pending[EspNowManager::MAX_PENDING];
 unsigned long EspNowManager::lastHeartbeat = 0;
 EspNowMessageHandler EspNowManager::onMessageHandler = nullptr;
+EspNowMessageHandler EspNowManager::onPeerHeartbeatHandler = nullptr;
 
 bool EspNowManager::begin(const String& nodeId, const String& role) {
     myNodeId = nodeId;
@@ -158,13 +159,22 @@ void EspNowManager::onReceive(const uint8_t mac[6], const uint8_t* data, size_t 
         sendAckFor(msg.sequenceNumber, mac);
     }
 
-    if (onMessageHandler && msg.type != EspNowMessageType::HELLO && msg.type != EspNowMessageType::HEARTBEAT) {
+    bool isDiscoveryTraffic = (msg.type == EspNowMessageType::HELLO || msg.type == EspNowMessageType::HEARTBEAT);
+
+    if (isDiscoveryTraffic && onPeerHeartbeatHandler) {
+        onPeerHeartbeatHandler(msg, mac);
+    }
+    if (onMessageHandler && !isDiscoveryTraffic) {
         onMessageHandler(msg, mac);
     }
 }
 
 void EspNowManager::setOnMessageHandler(EspNowMessageHandler handler) {
     onMessageHandler = handler;
+}
+
+void EspNowManager::setOnPeerHeartbeatHandler(EspNowMessageHandler handler) {
+    onPeerHeartbeatHandler = handler;
 }
 
 bool EspNowManager::findGatewayMac(uint8_t outMac[6]) {

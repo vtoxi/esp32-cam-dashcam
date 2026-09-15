@@ -34,6 +34,13 @@ public:
     // registry.
     static void setOnMessageHandler(EspNowMessageHandler handler);
 
+    // Registers a handler invoked specifically on HELLO/HEARTBEAT (the discovery/health
+    // traffic setOnMessageHandler deliberately skips) — this is what Phase 6's
+    // DeviceRegistry hooks into for auto-discovery and health tracking, kept separate so
+    // "a new peer said hello" and "a peer sent me a security-relevant message" aren't
+    // forced through the same callback.
+    static void setOnPeerHeartbeatHandler(EspNowMessageHandler handler);
+
     // Convenience lookup used by callers that want to target the gateway specifically
     // (falls back to broadcast if not yet discovered via a HELLO/HEARTBEAT).
     static bool findGatewayMac(uint8_t outMac[6]);
@@ -62,6 +69,7 @@ private:
     static unsigned long lastHeartbeat;
 
     static EspNowMessageHandler onMessageHandler;
+    static EspNowMessageHandler onPeerHeartbeatHandler;
 
     static void onReceive(const uint8_t mac[6], const uint8_t* data, size_t len);
     static void sendHeartbeat();

@@ -4,13 +4,13 @@ A modular, configuration-driven, distributed ESP32 vehicle dashcam, security, te
 and black-box platform — built for a Peugeot 2008 prototype install, designed to run on
 any vehicle.
 
-> **Status: Phase 5 — ESP-NOW.** Boot/identity/config (Phase 1), BLE+AP provisioning
-> (Phase 2), capability-gated hardware init (Phase 3), a working motion → confirm →
-> capture → local-evidence pipeline (Phase 4), and now node-to-gateway communication
-> over ESP-NOW with a Transport abstraction, message versioning, HMAC authentication,
-> sequence-number dedup, and ACK/retry (Phase 5). **Compiles clean for both targets.**
-> The node has been flashed and is running on real hardware; the gateway has not yet been
-> flashed, and no two-device ESP-NOW test has run yet. See
+> **Status: Phase 6 — Dynamic Node Management.** Boot/identity/config (Phase 1), BLE+AP
+> provisioning (Phase 2), capability-gated hardware init (Phase 3), a working motion →
+> confirm → capture → local-evidence pipeline (Phase 4), node-to-gateway ESP-NOW
+> communication (Phase 5), and now a zero-code, auto-populating gateway device registry
+> with remote rename/enable/disable/set-role/restart/factory-reset commands (Phase 6).
+> **Compiles clean for both targets.** The node has been flashed and is running on real
+> hardware; the gateway has not yet been flashed, and no two-device test has run yet. See
 > [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for full phase status and
 > known limitations.
 

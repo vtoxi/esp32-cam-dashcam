@@ -4,15 +4,15 @@ A modular, configuration-driven, distributed ESP32 vehicle dashcam, security, te
 and black-box platform — built for a Peugeot 2008 prototype install, designed to run on
 any vehicle.
 
-> **Status: Phase 7 — Multi-Camera Correlation.** Boot/identity/config (Phase 1), BLE+AP
-> provisioning (Phase 2), capability-gated hardware init (Phase 3), a working motion →
-> confirm → capture → local-evidence pipeline (Phase 4), node-to-gateway ESP-NOW
-> communication (Phase 5), a zero-code auto-populating gateway device registry with
-> remote commands (Phase 6), and now cross-camera correlation — one camera's confirmed
-> motion asks nearby cameras for a synchronized snapshot, and the gateway groups all the
-> responses into one incident summary (Phase 7). **Compiles clean for both targets.** The
-> node has been flashed and is running on real hardware; the gateway has not yet been
-> flashed, and no multi-device test has run yet. See
+> **Status: Phase 8 — GPS.** Boot/identity/config (Phase 1), BLE+AP provisioning
+> (Phase 2), capability-gated hardware init (Phase 3), a working motion → confirm →
+> capture → local-evidence pipeline (Phase 4), node-to-gateway ESP-NOW communication
+> (Phase 5), a zero-code auto-populating gateway device registry with remote commands
+> (Phase 6), cross-camera correlation into one incident summary (Phase 7), and now real
+> NEO-6M NMEA parsing on the gateway — live lat/lon/altitude/speed/course/satellite data,
+> with "no fix" always a normal, non-blocking state (Phase 8). **Compiles clean for both
+> targets.** The node has been flashed and is running on real hardware; the gateway has
+> not yet been flashed, and no GPS module has been bench-tested. See
 > [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for full phase status and
 > known limitations.
 

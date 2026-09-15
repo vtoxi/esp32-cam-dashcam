@@ -16,7 +16,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 5 | ESP-NOW | Compiles clean (both envs) — pending physical two-device bench test |
 | 6 | Dynamic Node Management | Compiles clean (both envs) — pending physical two-device bench test |
 | 7 | Multi-Camera Correlation | Compiles clean (both envs) — pending multi-device bench test |
-| 8 | GPS | Not started |
+| 8 | GPS | Compiles clean (both envs) — pending physical GPS module bench test |
 | 9 | MPU6050 | Not started |
 | 10 | Driving / Parking Modes | Not started |
 | 11 | Incident & Evidence Engine | Not started |
@@ -474,11 +474,62 @@ narrowly "prove multiple cameras' responses get grouped," which it does.
   11's vocabulary (`INTRUSION_DETECTED`, `IMPACT_DETECTED`) don't yet, since nothing
   produces them yet (no IMU/GPS bench-verified — Phase 8/9).
 
+## Phase 8 — GPS
+
+**Implemented:**
+- `GpsManager` (gateway-only) — full replacement for Phase 3's `GpsUart` (which was
+  explicitly scoped to a raw byte-liveness check only, full parsing deferred here).
+  Built on `TinyGPS++`: feeds every received UART byte into the parser and, whenever a
+  complete NMEA sentence updates the fix, refreshes latitude/longitude/altitude/speed/
+  course/satellite-count from whichever fields that sentence carried (GPRMC, GPGGA, etc.
+  — `TinyGPS++` classifies fields, not whole sentences, so this doesn't need to
+  special-case sentence types itself).
+- `GpsFixStatus`: `NO_FIX` / `FIX` — Section 21's hard requirement that GPS absence is a
+  normal, continuing state, never a blocking error. A fix is actively downgraded back to
+  `NO_FIX` if nothing refreshes it for 10 seconds (antenna disconnected, moved indoors,
+  satellites lost) rather than silently reporting an increasingly stale position as
+  current.
+- `GpsManager::toJson()` — compact JSON (`{"lat","lon","altM","speedKmph","courseDeg",
+  "sats"}` when fixed, `{"status":"NO_FIX"}` otherwise) for logging and future payload
+  embedding.
+- `gateway_main.cpp`: `GpsManager::loop()` now pumps every loop iteration (not
+  interval-gated like the old byte-count check — NMEA data arrives continuously and a
+  full UART buffer would drop sentences), `STATUS` reports the current fix, and — a
+  light Section 21 "incident location" integration — when `IncidentCorrelator` opens an
+  incident from a `MOTION_DETECTED`, the gateway's current GPS fix is logged alongside
+  it. Not yet persisted into the incident record itself (Phase 11's job); this proves
+  the data is available at the right moment, not that it's stored yet.
+- New dependency: `mikalhart/TinyGPSPlus@^1.0.3`, added to the shared `[env]` lib_deps —
+  confirmed (the hard way, back in earlier phases) that everything in
+  `lib/CarSentinelCommon/` compiles into *both* environments regardless of which
+  target's `main.cpp` actually uses it, so GPS-only dependencies still need to resolve
+  cleanly for the node build too. It does.
+
+**Not implemented (by design, later phases):** trip recording, geofencing, and
+"movement detection from GPS speed" (Sections 44/45) — those are dedicated later
+features, not part of "implement the GPS subsystem itself." GPS data is not yet attached
+to node-originated event payloads (`MOTION_DETECTED`'s JSON) since only the gateway has
+GPS — Section 24's full GPS+IMU+camera+RCWL+DHT correlation record is Phase 11 territory.
+
+**Build status: compiles clean, both environments** (verified directly — node
+19.1%/42.4%, gateway similar; TinyGPS++ resolved without issue). **Not yet bench-tested
+with a physical GPS module** — no code here has seen a real NMEA stream.
+
+**Known limitations / risks to verify on hardware:**
+- The 10-second stale-fix timeout is a guess, not tuned against real NEO-6M behavior
+  (cold-start time to first fix, typical re-acquisition time after a brief signal loss).
+- `GpsManager` reuses the same gateway UART1 pins (`rx=17, tx=18`) proposed — not
+  bench-verified — back in Phase 3/5; this phase doesn't change that risk, just adds
+  real parsing on top of it.
+- Indoor/bench testing may never produce a fix at all (GPS needs sky visibility) — a
+  `{"status":"NO_FIX"}` result during bench testing doesn't necessarily mean the code is
+  broken; testing outdoors or near a window is the documented fallback (per
+  `docs/wiring/NEO_6M.md`).
+
 ## Next Step
 
-Flash all firmware and bench-test Phase 7 with at least two camera nodes plus the
-gateway: trigger motion on one node's RCWL, confirm the other node's `CAPTURE_REQUEST`
-handling fires (check its own log for "Synchronized capture..." and its SD card for a
-new `RELATED_CAPTURE` event), and confirm the gateway logs a single consolidated
-`INCIDENT-...` summary naming both nodes. Once that's solid, continue with Phase 8
-(GPS).
+Flash all firmware and bench-test Phases 5–8 together: two camera nodes triggering
+correlated motion events (Phase 5/6/7), and the gateway's GPS module outdoors or near a
+window to confirm `GpsManager` actually acquires a fix and `STATUS`/incident-location
+logs show real coordinates, not just `{"status":"NO_FIX"}`. Once that's solid, continue
+with Phase 9 (MPU6050).

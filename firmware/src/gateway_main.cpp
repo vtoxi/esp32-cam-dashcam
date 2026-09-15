@@ -1,12 +1,12 @@
 // CarSentinel Gateway — Phase 1 (device foundation) + Phase 2 (BLE/Wi-Fi provisioning)
 // + Phase 3 (hardware capability layer) + Phase 5 (ESP-NOW) + Phase 6 (dynamic node
-// management).
+// management) + Phase 7 (multi-camera correlation) + Phase 8 (GPS).
 //
 // Hardware capabilities (I2C buses for IMU/OLED, GPS UART) are initialized before
 // Wi-Fi/provisioning for the same reason as the node: they shouldn't depend on network
-// state. Full driver logic (rendering pages, parsing NMEA, reading accel/gyro) is
-// Phase 8/9/13 — Phase 3 only proves presence detection on the proposed (not yet
-// bench-verified) gateway GPIOs from docs/wiring/ESP32_S3_GATEWAY.md.
+// state. IMU/OLED driver logic (reading accel/gyro, rendering pages) is still
+// Phase 9/13 — GPS is now fully implemented (GpsManager, real NMEA parsing), superseding
+// Phase 3's byte-liveness-only GpsUart.
 
 #include <Arduino.h>
 #include "Logger.h"
@@ -21,7 +21,7 @@
 #include "HardwareProfiles.h"
 #include "CapabilitiesConfig.h"
 #include "I2CBusManager.h"
-#include "GpsUart.h"
+#include "GpsManager.h"
 #include "EspNowManager.h"
 #include "PeerRegistry.h"
 #include "DeviceRegistry.h"
@@ -35,8 +35,6 @@ using namespace CarSentinel;
 static const char* TAG = "Gateway";
 static unsigned long lastDiagnosticsLog = 0;
 static const unsigned long DIAGNOSTICS_INTERVAL_MS = 30000;
-static const unsigned long GPS_CHECK_INTERVAL_MS = 10000;
-static unsigned long lastGpsCheck = 0;
 static bool provisioningMode = false;
 static bool espNowActive = false;
 
@@ -72,7 +70,12 @@ static void onEspNowMessage(const EspNowMessage& msg, const uint8_t mac[6]) {
         JsonDocument doc;
         if (deserializeJson(doc, msg.payload) == DeserializationError::Ok) {
             String eventId = doc["eventId"] | "unsaved";
-            IncidentCorrelator::startIncident(msg.senderNodeId, eventId);
+            String incidentId = IncidentCorrelator::startIncident(msg.senderNodeId, eventId);
+            // Section 21 "incident location": the gateway is the only node with GPS, so
+            // it's the natural place to attach a position to an incident. Logged
+            // alongside the incident, not yet persisted into it — Phase 11 owns the
+            // actual incident record this would get written into.
+            Logger::info(TAG, incidentId + " location: " + GpsManager::toJson());
         }
     } else if (msg.type == EspNowMessageType::CAPTURE_RESULT) {
         JsonDocument doc;
@@ -188,7 +191,7 @@ static void initHardwareCapabilities() {
     }
 
     if (caps.gps) {
-        GpsUart::begin(caps.gpsRxGpio, caps.gpsTxGpio);
+        GpsManager::begin(caps.gpsRxGpio, caps.gpsTxGpio);
     } else {
         Logger::info(TAG, "GPS capability disabled; skipping UART init");
     }
@@ -225,6 +228,9 @@ static void handleSerialCommands() {
                      " ssid=" + net.ssid);
         Logger::info(TAG, "capabilities: gps=" + String(caps.gps) + " imu=" + String(caps.imu) +
                      " display=" + String(caps.display) + "(" + String(caps.displayCount) + ")");
+        if (caps.gps) {
+            Logger::info(TAG, "gps: " + GpsManager::toJson());
+        }
         Logger::info(TAG, "espnow.active=" + String(espNowActive) + " peers=" + String(PeerRegistry::count()));
         for (uint8_t i = 0; i < PeerRegistry::count(); i++) {
             PeerInfo* p = PeerRegistry::get(i);
@@ -384,10 +390,10 @@ void loop() {
 
     unsigned long now = millis();
     const CapabilitiesConfigData& caps = CapabilitiesConfig::get();
-    if (caps.gps && now - lastGpsCheck >= GPS_CHECK_INTERVAL_MS) {
-        lastGpsCheck = now;
-        int drained = GpsUart::drain();
-        Logger::info(TAG, "GPS: " + String(drained) + " bytes received in last check window");
+    // Pumped every iteration, not interval-gated — NMEA sentences arrive continuously
+    // and must be drained regularly to avoid losing data to a full UART buffer.
+    if (caps.gps) {
+        GpsManager::loop();
     }
 
     if (now - lastDiagnosticsLog >= DIAGNOSTICS_INTERVAL_MS) {

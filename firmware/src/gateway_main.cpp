@@ -37,8 +37,11 @@ static const uint8_t SSD1306_I2C_ADDR = 0x3C;
 static void enterProvisioningMode() {
     provisioningMode = true;
     const DeviceConfigData& dev = DeviceConfig::get();
-    String suffix = dev.nodeId.substring(dev.nodeId.length() >= 6 ? dev.nodeId.length() - 6 : 0);
-    String apSsid = "CarSentinel-Setup-" + suffix;
+    // Use the full role-prefixed nodeId (e.g. "NODE-A1B2C3" / "GATEWAY-A1B2C3"), not just
+    // a MAC-derived hex suffix — a bare hex suffix doesn't say what kind of device it is,
+    // making a gateway and a node indistinguishable in a Wi-Fi/BLE scan during setup.
+    // Fits within the 32-byte Wi-Fi SSID limit for both current prefixes.
+    String apSsid = "CarSentinel-" + dev.nodeId;
 
     Logger::info(TAG, "Entering provisioning mode (BLE + AP): " + apSsid);
     ProvisioningPortal::begin(apSsid);

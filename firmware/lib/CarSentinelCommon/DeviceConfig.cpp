@@ -18,7 +18,7 @@ const char* roleToString(DeviceRole role) {
         case DeviceRole::GATEWAY: return "GATEWAY";
         case DeviceRole::CAMERA: return "CAMERA";
         case DeviceRole::SENSOR: return "SENSOR";
-        case DeviceRole::DISPLAY: return "DISPLAY";
+        case DeviceRole::DISPLAY_NODE: return "DISPLAY";
         case DeviceRole::VEHICLE_CONTROLLER: return "VEHICLE_CONTROLLER";
         default: return "UNASSIGNED";
     }
@@ -28,7 +28,7 @@ DeviceRole roleFromString(const String& value) {
     if (value == "GATEWAY") return DeviceRole::GATEWAY;
     if (value == "CAMERA") return DeviceRole::CAMERA;
     if (value == "SENSOR") return DeviceRole::SENSOR;
-    if (value == "DISPLAY") return DeviceRole::DISPLAY;
+    if (value == "DISPLAY") return DeviceRole::DISPLAY_NODE;
     if (value == "VEHICLE_CONTROLLER") return DeviceRole::VEHICLE_CONTROLLER;
     return DeviceRole::UNASSIGNED;
 }

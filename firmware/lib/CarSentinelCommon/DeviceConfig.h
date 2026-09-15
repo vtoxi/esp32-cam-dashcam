@@ -18,7 +18,9 @@ enum class DeviceRole : uint8_t {
     GATEWAY,
     CAMERA,
     SENSOR,
-    DISPLAY,
+    // Named DISPLAY_NODE, not DISPLAY: Arduino.h #defines DISPLAY as 0x1 (a text-alignment
+    // constant), which collides with a bare enumerator name and fails to compile.
+    DISPLAY_NODE,
     VEHICLE_CONTROLLER
 };
 

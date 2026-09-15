@@ -8,15 +8,11 @@ namespace CarSentinel {
 static const char* TAG = "Watchdog";
 
 void Watchdog::begin(uint32_t timeoutSeconds) {
-    // esp_task_wdt_config_t is the arduino-esp32 3.x / ESP-IDF 5.x task-watchdog API.
-    // If the project toolchain pins an older arduino-esp32 core, this call signature
-    // will need updating to the legacy esp_task_wdt_init(timeout_s, panic) form.
-    esp_task_wdt_config_t config = {
-        .timeout_ms = timeoutSeconds * 1000,
-        .idle_core_mask = 0,
-        .trigger_panic = true
-    };
-    esp_task_wdt_init(&config);
+    // Legacy (ESP-IDF 4.x-style) esp_task_wdt_init(timeout_s, panic) signature — this is
+    // what the pinned platform-espressif32/arduino-esp32 core (3.20017.241212) actually
+    // provides. The newer esp_task_wdt_config_t struct form (ESP-IDF 5.x) doesn't exist
+    // in this toolchain; switch back if the pinned core is later upgraded past it.
+    esp_task_wdt_init(timeoutSeconds, true);
     esp_task_wdt_add(NULL);  // register the calling task (loop task, if called from setup())
     Logger::info(TAG, "Watchdog armed, timeout=" + String(timeoutSeconds) + "s");
 }

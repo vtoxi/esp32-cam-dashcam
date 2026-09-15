@@ -27,6 +27,11 @@ public:
     // (already done internally on commit — see .cpp) and then stop()+reboot.
     static bool isCommitted();
 
+    // Called by the internal Commit characteristic callback once it has persisted the
+    // staged config. Not intended for external callers — public only because the NimBLE
+    // callback class lives in the .cpp as a separate type, not a nested friend.
+    static void markCommitted();
+
 private:
     static bool active;
     static bool committed;

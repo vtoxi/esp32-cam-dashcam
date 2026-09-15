@@ -5,12 +5,13 @@ and black-box platform — built for a Peugeot 2008 prototype install, designed 
 any vehicle.
 
 > **Status: Phase 4 — Single Camera Node.** Boot/identity/config (Phase 1), BLE+AP
-> provisioning (Phase 2), capability-gated hardware init (Phase 3), and now a working
+> provisioning (Phase 2), capability-gated hardware init (Phase 3), and a working
 > motion → confirm → capture → local-evidence pipeline make one ESP32-CAM node a
-> standalone security device with no gateway required. **Not yet compiled/flashed** — no
-> PlatformIO toolchain is available in the environment this was written in. This is the
-> first phase that genuinely needs physical hardware (camera + SD card) to validate. See
-> [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for phase status.
+> standalone security device with no gateway required. **Compiles clean for both targets**
+> with a real PlatformIO toolchain (three real bugs found and fixed in the process — see
+> `docs/IMPLEMENTATION_PLAN.md` Phase 4). **Not yet flashed/bench-tested on physical
+> hardware.** See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for phase
+> status.
 
 ## Overview
 

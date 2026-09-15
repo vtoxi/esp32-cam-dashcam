@@ -12,7 +12,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 1 | Generic Device Foundation | Complete (pending bench verification) |
 | 2 | BLE + Wi-Fi Provisioning | Complete (pending bench verification) |
 | 3 | Hardware Capability Layer | Complete (pending bench verification) |
-| 4 | Single Camera Node | **In progress** (this commit) |
+| 4 | Single Camera Node | Compiles clean (both envs) — pending physical hardware bench test |
 | 5 | ESP-NOW | Not started |
 | 6 | Dynamic Node Management | Not started |
 | 7 | Multi-Camera Correlation | Not started |
@@ -222,17 +222,41 @@ retention/cleanup (Section 27's quota fields, Phase 11), full incident lifecycle
 (Phase 11), burst capture (Section 14 mentions it; single-frame-per-event is enough to
 prove the pipeline).
 
-**Build status: not compiled.** Same toolchain gap as prior phases. New risks:
-- `esp_camera_init` with the AI-Thinker pin set — extremely standard, used by nearly
-  every public ESP32-CAM example, but still unverified on *this* physical unit.
-- PSRAM detection (`psramFound()`) determines frame size/buffer count — if this specific
-  board's PSRAM isn't enabled in the build config, camera init may fail outright rather
-  than gracefully degrade; worth an explicit bench check.
-- `SD_MMC` file API calls (`mkdir`, `open(..., FILE_WRITE)`, `parseInt()`) in
-  `EvidenceManager` are standard but untested here.
+**Build status: compiles clean, both environments, with a real PlatformIO toolchain.**
+The user installed PlatformIO locally and ran `pio run`, which caught three real bugs
+that had been sitting undetected through Phases 1–4 (self-review and reading the code
+is not a substitute for actually compiling it — this is the proof):
+
+1. **`DeviceRole::DISPLAY` collided with `Arduino.h`'s `#define DISPLAY 0x1`** (a
+   text-alignment constant). Renamed the enumerator to `DISPLAY_NODE` in
+   `DeviceConfig.h`/`.cpp` — the persisted/wire string value stays `"DISPLAY"`, only the
+   C++ identifier changed, so no schema migration is needed.
+2. **`BLEProvisioning`'s NimBLE write-callback couldn't set the private static
+   `committed` flag** — the callback class lives in the `.cpp` as a separate type, not a
+   nested friend. Added a public `BLEProvisioning::markCommitted()` setter instead of
+   granting broader access.
+3. **`Watchdog.cpp` used the `esp_task_wdt_config_t` struct API (ESP-IDF 5.x)**, but the
+   pinned `platform-espressif32`/`arduino-esp32` core (3.20017.241212) actually ships the
+   older ESP-IDF 4.x-style `esp_task_wdt_init(timeout_s, panic)` signature — exactly the
+   fallback flagged as a risk back in Phase 1. Switched to that signature.
+
+Also corrected `platformio.ini`'s `gateway` environment: PlatformIO's default
+`esp32-s3-devkitc-1` board JSON describes the **N8 variant (8MB flash, no PSRAM)**, not
+the confirmed N16R8 (16MB flash, 8MB octal PSRAM) hardware. Added explicit overrides
+(`board_upload.flash_size`, `default_16MB.csv` partitions, `-D BOARD_HAS_PSRAM`) matching
+the override set PlatformIO's own N16R8 board definitions use, so flash size and PSRAM
+are correctly recognized (build now reports a 6.5MB app partition, not the ~1.3MB the
+wrong 8MB/no-PSRAM default would have left after OTA dual-partitioning).
+
+Final result: `gateway` RAM 15.9%/Flash 15.9% (16MB), `node` RAM 18.5%/Flash 41.3% (4MB).
+
+**Still not done:** flashing to real hardware and functional bench testing (camera
+capture quality, motion trigger accuracy, SD write reliability, BLE/AP provisioning
+end-to-end, Wi-Fi reconnect behavior). Compiling clean rules out toolchain/API mismatches
+but proves nothing about runtime correctness on the actual boards.
 
 ## Next Step
 
-Compile and bench-test Phases 1–4 together on real hardware — this is the first phase
-that actually needs a physical camera + SD card to validate meaningfully, so it's a
-natural point to stop and get a toolchain running before Phase 5 (ESP-NOW).
+Flash both images to real hardware and run the Phase 1–4 functional bench tests (BLE/AP
+provisioning, camera capture, SD evidence write, and — once RCWL/DHT GPIOs are
+bench-confirmed — the motion trigger pipeline) before starting Phase 5 (ESP-NOW).

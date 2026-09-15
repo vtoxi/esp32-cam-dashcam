@@ -86,7 +86,7 @@ class CommitCallbacks : public NimBLECharacteristicCallbacks {
         Logger::info(TAG, "BLE: commit applied — ssid=" + net.ssid +
                      " displayName=" + dev.displayName +
                      " role=" + String(roleToString(dev.role)));
-        BLEProvisioning::committed = true;
+        BLEProvisioning::markCommitted();
     }
 };
 
@@ -153,6 +153,10 @@ bool BLEProvisioning::isActive() {
 
 bool BLEProvisioning::isCommitted() {
     return committed;
+}
+
+void BLEProvisioning::markCommitted() {
+    committed = true;
 }
 
 }  // namespace CarSentinel

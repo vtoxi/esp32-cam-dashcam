@@ -1,11 +1,11 @@
 // CarSentinel generic Node — Phase 1 (device foundation) + Phase 2 (BLE/Wi-Fi
-// provisioning).
+// provisioning) + Phase 3 (hardware capability layer).
 //
-// Same boot flow as gateway_main.cpp (see comments there) with a NODE identity prefix
-// and UNASSIGNED default role. Wi-Fi/provisioning state must never gate anything
-// security-critical once Phase 4 adds local capture/motion logic to loop() — that is
-// why WiFiManager::connectBlocking() is bounded and provisioning mode runs entirely
-// inside loop() rather than blocking it going forward.
+// Boot order matters here: hardware capabilities (SD/RCWL/DHT) are initialized BEFORE
+// Wi-Fi/provisioning, and polled in loop() unconditionally — regardless of
+// provisioning/Wi-Fi state — because Section 5 requires motion sensing and local
+// evidence capture to keep working even while a node is unprovisioned or mid-setup.
+// Camera presence is capability-flagged here but actual esp32-camera init is Phase 4.
 
 #include <Arduino.h>
 #include "Logger.h"
@@ -17,12 +17,19 @@
 #include "WiFiManager.h"
 #include "ProvisioningPortal.h"
 #include "BLEProvisioning.h"
+#include "HardwareProfiles.h"
+#include "CapabilitiesConfig.h"
+#include "SdStorage.h"
+#include "MotionSensor.h"
+#include "TemperatureHumiditySensor.h"
 
 using namespace CarSentinel;
 
 static const char* TAG = "Node";
 static unsigned long lastDiagnosticsLog = 0;
 static const unsigned long DIAGNOSTICS_INTERVAL_MS = 30000;
+static const unsigned long DHT_READ_INTERVAL_MS = 5000;  // DHT11 min ~1s; 5s is comfortably above it
+static unsigned long lastDhtRead = 0;
 static bool provisioningMode = false;
 
 static void enterProvisioningMode() {
@@ -40,6 +47,49 @@ static void restartInto(const char* reason) {
     Logger::warn(TAG, String("Restarting: ") + reason);
     delay(200);
     ESP.restart();
+}
+
+static void initHardwareCapabilities() {
+    DeviceConfigData dev = DeviceConfig::get();
+    if (dev.hardwareProfile == "UNKNOWN") {
+        dev.hardwareProfile = PROFILE_ESP32_CAM_AI_THINKER;
+        DeviceConfig::save(dev);
+        Logger::info(TAG, "hardwareProfile defaulted to " + dev.hardwareProfile);
+    }
+
+    CapabilitiesConfigData defaults = defaultCapabilitiesForProfile(dev.hardwareProfile);
+    CapabilitiesConfig::begin(defaults);
+    const CapabilitiesConfigData& caps = CapabilitiesConfig::get();
+
+    Logger::info(TAG, "Capabilities: camera=" + String(caps.camera) + " sd=" + String(caps.sd) +
+                 " rcwl=" + String(caps.rcwl) + "(gpio=" + String(caps.rcwlGpio) + ")" +
+                 " dht=" + String(caps.dht) + "(gpio=" + String(caps.dhtGpio) + ")");
+
+    if (caps.camera) {
+        Logger::info(TAG, "Camera capability present — esp32-camera init deferred to Phase 4");
+    }
+
+    if (caps.sd) {
+        if (!SdStorage::begin()) {
+            Logger::warn(TAG, "SD unavailable — continuing without local evidence storage (Section 59)");
+        }
+    } else {
+        Logger::info(TAG, "SD capability disabled; skipping mount");
+    }
+
+    if (caps.rcwl && caps.rcwlGpio != GPIO_UNCONFIGURED) {
+        MotionSensor::begin(caps.rcwlGpio);
+    } else {
+        Logger::info(TAG, "RCWL capability disabled or GPIO unconfigured; skipping init "
+                     "(enable via capabilities.json once a bench test confirms a free GPIO — "
+                     "see docs/HARDWARE.md open questions)");
+    }
+
+    if (caps.dht && caps.dhtGpio != GPIO_UNCONFIGURED) {
+        TemperatureHumiditySensor::begin(caps.dhtGpio);
+    } else {
+        Logger::info(TAG, "DHT capability disabled or GPIO unconfigured; skipping init");
+    }
 }
 
 static void handleSerialCommands() {
@@ -61,6 +111,7 @@ static void handleSerialCommands() {
     } else if (line == "STATUS") {
         const DeviceConfigData& cfg = DeviceConfig::get();
         const NetworkConfigData& net = NetworkConfig::get();
+        const CapabilitiesConfigData& caps = CapabilitiesConfig::get();
         Logger::info(TAG, "nodeId=" + cfg.nodeId + " displayName=" + cfg.displayName +
                      " role=" + String(roleToString(cfg.role)) +
                      " hardwareProfile=" + cfg.hardwareProfile +
@@ -70,6 +121,8 @@ static void handleSerialCommands() {
                      " connected=" + String(WiFiManager::isConnected() ? "true" : "false") +
                      " ip=" + (WiFiManager::isConnected() ? WiFiManager::localIP() : String("-")) +
                      " ssid=" + net.ssid);
+        Logger::info(TAG, "sd.mounted=" + String(SdStorage::status().mounted) +
+                     " rcwl.enabled=" + String(caps.rcwl) + " dht.enabled=" + String(caps.dht));
         Diagnostics::logSnapshot(TAG);
     }
 }
@@ -83,8 +136,6 @@ void setup() {
 
     Diagnostics::begin();
 
-    // Role starts UNASSIGNED — a freshly flashed generic node has no predetermined role
-    // until provisioning assigns one (this phase's BLE/AP form, or a manual edit).
     if (!DeviceConfig::begin("NODE", DeviceRole::UNASSIGNED)) {
         Logger::error(TAG, "DeviceConfig::begin failed — halting boot");
         while (true) { delay(1000); }
@@ -100,6 +151,10 @@ void setup() {
 
     Diagnostics::selfTest();
     Watchdog::begin(10);
+
+    // Hardware capabilities before Wi-Fi/provisioning: local sensing must not depend on
+    // network state (Section 5).
+    initHardwareCapabilities();
 
     if (NetworkConfig::hasCredentials()) {
         bool connected = WiFiManager::connectBlocking(NetworkConfig::get());
@@ -129,11 +184,25 @@ void loop() {
         }
     } else {
         WiFiManager::loop();
-        // Local security/capture logic (Phase 4+) will run here unconditionally,
-        // independent of Wi-Fi/provisioning state — see Section 5 node independence.
     }
 
+    // Sensor polling runs unconditionally — independent of provisioning/Wi-Fi state
+    // (Section 5). Full debounce/cooldown/event pipeline lands in Phase 4; this is just
+    // proof the capability layer reads live hardware.
+    const CapabilitiesConfigData& caps = CapabilitiesConfig::get();
+    if (caps.rcwl && caps.rcwlGpio != GPIO_UNCONFIGURED && MotionSensor::isTriggered()) {
+        Logger::info(TAG, "RCWL: motion signal HIGH");
+    }
     unsigned long now = millis();
+    if (caps.dht && caps.dhtGpio != GPIO_UNCONFIGURED && now - lastDhtRead >= DHT_READ_INTERVAL_MS) {
+        lastDhtRead = now;
+        TemperatureHumidityReading r = TemperatureHumiditySensor::read();
+        if (r.valid) {
+            Logger::info(TAG, "DHT: temp=" + String(r.temperatureC, 1) + "C humidity=" +
+                         String(r.humidityPercent, 1) + "%");
+        }
+    }
+
     if (now - lastDiagnosticsLog >= DIAGNOSTICS_INTERVAL_MS) {
         lastDiagnosticsLog = now;
         Diagnostics::logSnapshot(TAG);

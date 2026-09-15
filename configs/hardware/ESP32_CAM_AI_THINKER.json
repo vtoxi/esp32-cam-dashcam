@@ -1,0 +1,15 @@
+{
+  "_comment": "Reference data mirroring firmware/lib/CarSentinelCommon/HardwareProfiles.cpp. Not loaded from disk by firmware — pin tables are compiled in (Section 49 allows board-level pin definitions to require a rebuild). This file exists so the pin data is reviewable without reading C++.",
+  "profileName": "ESP32_CAM_AI_THINKER",
+  "board": "AI-Thinker ESP32-CAM",
+  "status": "camera/SD pins are the well-established public reference pinout (see docs/wiring/ESP32_CAM.md) — RCWL/DHT GPIOs below are null because they are not yet bench-verified",
+  "defaultCapabilities": {
+    "camera": true,
+    "sd": true,
+    "rcwl": { "enabled": false, "gpio": null },
+    "dht": { "enabled": false, "gpio": null },
+    "gps": { "enabled": false },
+    "imu": { "enabled": false },
+    "display": { "enabled": false }
+  }
+}

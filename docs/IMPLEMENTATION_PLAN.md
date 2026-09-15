@@ -10,8 +10,8 @@ Phases are implemented strictly one at a time, per the project specification (Se
 |---|---|---|
 | 0 | Repository & Hardware Discovery | Complete |
 | 1 | Generic Device Foundation | Complete (pending bench verification) |
-| 2 | BLE + Wi-Fi Provisioning | **In progress** (this commit) |
-| 3 | Hardware Capability Layer | Not started |
+| 2 | BLE + Wi-Fi Provisioning | Complete (pending bench verification) |
+| 3 | Hardware Capability Layer | **In progress** (this commit) |
 | 4 | Single Camera Node | Not started |
 | 5 | ESP-NOW | Not started |
 | 6 | Dynamic Node Management | Not started |
@@ -147,7 +147,56 @@ flashed. Specific risks to check first when a toolchain is available:
   approach and won't trigger every OS's captive-portal auto-popup; manually browsing to
   `192.168.4.1` always works as the documented fallback.
 
+## Phase 3 — Hardware Capability Layer
+
+**Implemented:**
+- `firmware/lib/CarSentinelCommon/HardwareProfiles` — compiled-in pin tables for the two
+  confirmed boards (`ESP32_CAM_AI_THINKER`, `ESP32_S3_N16R8_GATEWAY`). Board-level pin
+  data is explicitly allowed to require a firmware rebuild (Section 49's closing line);
+  what stays runtime-configurable is which capabilities are *enabled*.
+- `CapabilitiesConfig` — persistent, versioned (`/config/capabilities.json`) per-device
+  enable flags + GPIO assignments, seeded from the hardware profile on first boot, then
+  the sole source of truth (editing the file — no UI for this yet, that's Phase 19 — is
+  how a device's sensor set is changed without reflashing).
+- `I2CBusManager` — wraps `Wire`/`Wire1` for the gateway's two I2C buses (needed because
+  both SSD1306 units are confirmed at address `0x3C` with no jumper — see
+  `docs/wiring/SSD1306.md`); presence-probes a device by address.
+- `MotionSensor` (RCWL), `TemperatureHumiditySensor` (DHT11, via Adafruit DHT library),
+  `GpsUart` (raw UART open + byte-liveness check), `SdStorage` (SD_MMC 1-bit mount) —
+  each Phase-3-scoped to init/detect only; full driver behavior (debounce, NMEA parsing,
+  accel/gyro reads, page rendering) is Phase 4/8/9/13.
+- Both `gateway_main.cpp`/`node_main.cpp`: hardware capability init now runs **before**
+  Wi-Fi/provisioning, and sensor polling in `loop()` is unconditional — local sensing
+  must never depend on network/provisioning state (Section 5). `STATUS` now reports
+  capability/sensor state too.
+- `configs/hardware/*.json` — human-readable mirrors of the compiled profile tables (not
+  loaded by firmware, exist so the pin data is reviewable without reading C++).
+  `configs/defaults/capabilities_config.example.json`.
+
+**Deliberately conservative:** on the ESP32-CAM node, RCWL and DHT stay
+`enabled: false, gpio: -1` by default — their GPIOs are still not bench-verified (see
+`docs/HARDWARE.md`), so the capability layer exists but nothing guesses a pin. On the
+gateway, GPS/IMU/display default to *enabled* with the *proposed* (untested) GPIOs from
+`docs/wiring/ESP32_S3_GATEWAY.md`, since that's the best current information — every log
+line touching them says "proposed, not bench-verified."
+
+**Not implemented (by design, later phases):** actual camera capture (Phase 4), NMEA
+parsing (Phase 8), IMU accel/gyro reads (Phase 9), OLED rendering (Phase 13), evidence
+file layout on SD (Section 27, Phase 4/11).
+
+**Build status: not compiled.** Same toolchain gap as Phases 1–2. New risks this phase
+adds to the bench-test list:
+- `adafruit/DHT sensor library@^1.4.6` + its `Adafruit Unified Sensor` dependency,
+  newly added to `platformio.ini` — unverified to resolve/compile cleanly.
+- `Wire1` on the ESP32-S3 gateway (`I2CBusManager` bus index 1) — guarded by
+  `#if SOC_I2C_NUM > 1`, but the actual Arduino-ESP32 core's `Wire1` global/constructor
+  behavior on this specific board is unverified.
+- `SD_MMC.begin("/sdcard", true)` 1-bit-mode default pins are assumed to match
+  AI-Thinker's fixed SD slot wiring per public reference — not yet confirmed against the
+  physical unit (see `docs/wiring/MICROSD.md`).
+
 ## Next Step
 
-Compile and bench-test Phases 1–2 together on real hardware (both risks lists above)
-before starting Phase 3 (Hardware Capability Layer).
+Compile and bench-test Phases 1–3 together on real hardware (all risk lists above,
+especially the gateway's proposed I2C/UART pins and the still-unconfirmed ESP32-CAM
+RCWL/DHT GPIOs) before starting Phase 4 (Single Camera Node).

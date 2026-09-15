@@ -8,8 +8,8 @@ Phases are implemented strictly one at a time, per the project specification (Se
 
 | Phase | Name | Status |
 |---|---|---|
-| 0 | Repository & Hardware Discovery | **In progress** (this commit) |
-| 1 | Generic Device Foundation | Not started |
+| 0 | Repository & Hardware Discovery | Complete |
+| 1 | Generic Device Foundation | **In progress** (this commit) |
 | 2 | BLE + Wi-Fi Provisioning | Not started |
 | 3 | Hardware Capability Layer | Not started |
 | 4 | Single Camera Node | Not started |
@@ -57,11 +57,47 @@ Full detail in `docs/HARDWARE.md`.
 **Explicitly not done:** no firmware, no `platformio.ini`, no ESP-NOW code, no final
 gateway GPIO assignments.
 
+## Phase 1 — Generic Device Foundation
+
+**Implemented:**
+- `firmware/platformio.ini` — two environments (`gateway`: esp32-s3-devkitc-1 board def
+  as closest match to the confirmed ESP32-S3-N16R8; `node`: esp32cam / AI-Thinker),
+  sharing one Arduino/PlatformIO project via per-environment `build_src_filter`.
+- `firmware/lib/CarSentinelCommon/`:
+  - `Logger` — ERROR/WARN/INFO/DEBUG/TRACE structured logging to Serial, runtime level.
+  - `DeviceIdentity` — MAC-derived default node ID (`GATEWAY-XXXXXX` / `NODE-XXXXXX`)
+    so an unprovisioned device is identifiable before Phase 2 BLE/AP provisioning exists.
+  - `DeviceConfig` — persistent config on LittleFS (`/config/device.json`), fields
+    `schemaVersion, nodeId, displayName, role, hardwareProfile, firmwareVersion`, with a
+    `migrate()` seam for future schema bumps (Section 39 — firmware updates must not
+    silently invalidate existing config).
+  - `Diagnostics` — uptime, free/min-heap, reset reason; `healthCheck()` and `selfTest()`
+    stubs each later phase's own checks plug into (Section 58).
+  - `Watchdog` — ESP-IDF task watchdog wrapper, 10s default timeout, fed from `loop()`.
+- `firmware/src/gateway_main.cpp`, `firmware/src/node_main.cpp` — near-identical generic
+  boot flow (only default role/ID-prefix differ), plus `STATUS` and `FACTORY_RESET`
+  serial commands (Section 40 — software factory reset).
+- `configs/defaults/device_config.example.json` — example of the on-disk schema.
+
+**Not implemented (by design, later phases):** Wi-Fi/BLE (Phase 2), any sensor/camera
+code (Phase 3+), ESP-NOW (Phase 5), physical-button factory reset (no GPIO assignment
+exists yet for it — deferred with the rest of Phase 3's GPIO work).
+
+**Build status: not compiled.** No PlatformIO/Python toolchain is installed in this
+environment (`pio`/`python3`/`pip` all unavailable), so this code has been written and
+reviewed but **not built or flashed**. Before trusting it, install PlatformIO
+(`pip install platformio` or the VS Code extension) and run:
+```
+cd firmware
+pio run -e gateway
+pio run -e node
+```
+and flash+serial-monitor each target to confirm boot, `STATUS`, and `FACTORY_RESET`
+behave as documented. Report any compile errors back — the `esp_task_wdt_config_t` API
+in `Watchdog.cpp` in particular assumes a recent arduino-esp32 core (3.x / ESP-IDF 5.x)
+and may need adjusting for an older pinned platform version.
+
 ## Next Step
 
-Before Phase 1 can begin meaningfully, resolve the open hardware questions in
-`docs/HARDWARE.md` (exact ESP32-S3 board model, SSD1306 address-jumper availability,
-confirmed unit counts). Phase 1 itself (Generic Device Foundation: boot, device identity,
-persistent config, factory reset, diagnostics, watchdog, logging) does not strictly
-require the gateway pin table to start, so it can begin in parallel with hardware
-verification if desired.
+Compile and bench-test Phase 1 on real hardware (see Build status above) before starting
+Phase 2 (BLE + Wi-Fi Provisioning).

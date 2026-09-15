@@ -4,9 +4,12 @@ A modular, configuration-driven, distributed ESP32 vehicle dashcam, security, te
 and black-box platform — built for a Peugeot 2008 prototype install, designed to run on
 any vehicle.
 
-> **Status: Phase 0 — Repository & Hardware Discovery.** No firmware exists yet. This
-> repository currently contains architecture and hardware documentation only. See
-> [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for phase status.
+> **Status: Phase 1 — Generic Device Foundation.** Boot, device identity, persistent
+> versioned config, factory reset, diagnostics, and watchdog exist for both the gateway
+> and a generic node. **Not yet compiled/flashed** — no PlatformIO toolchain is
+> available in the environment this was written in. See
+> [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for phase status and what
+> needs bench verification before Phase 2.
 
 ## Overview
 
@@ -65,8 +68,18 @@ Arduino core for ESP32, built via PlatformIO (two environments: `gateway`, `node
 
 ## Quick Start
 
-Not yet applicable — no firmware exists. This section will be filled in starting Phase 1
-(build/flash instructions) and Phase 2 (provisioning walkthrough).
+```
+1. Install PlatformIO (pip install platformio, or the VS Code extension)
+2. cd firmware
+3. pio run -e gateway     # build the ESP32-S3 gateway image
+4. pio run -e node        # build the generic ESP32-CAM node image
+5. pio run -e gateway -t upload   # flash the gateway (adjust port if needed)
+6. pio run -e node -t upload      # flash a camera node (via FTDI, GPIO0 to GND while flashing)
+7. pio device monitor             # watch boot logs; try STATUS and FACTORY_RESET commands
+```
+
+Provisioning (assigning a real name/role instead of the MAC-derived default) lands in
+Phase 2 — not yet implemented.
 
 ## Adding / Removing / Replacing a Camera
 
@@ -95,8 +108,11 @@ in from Phase 5 onward. Full details and known limitations will be documented in
 
 ## Development
 
-No build system exists yet (Phase 1 introduces `platformio.ini`). This section will be
-updated once firmware scaffolding lands.
+`firmware/platformio.ini` defines two environments, `gateway` and `node`, both built
+from one Arduino/PlatformIO project. Shared logic (device identity, persistent config,
+diagnostics, watchdog, logging) lives in `firmware/lib/CarSentinelCommon/`; each
+environment compiles only its own entry point (`firmware/src/gateway_main.cpp` or
+`node_main.cpp`). See Quick Start above for build/flash commands.
 
 ## Wiring
 

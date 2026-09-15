@@ -82,15 +82,25 @@ dashcam_setup/
 │   ├── hardware/          (hardware profiles, e.g. ESP32_CAM_AI_THINKER.json)
 │   └── examples/
 ├── firmware/
-│   ├── gateway/           (PlatformIO env, created Phase 1)
-│   ├── node/               (PlatformIO env, created Phase 1)
-│   └── common/             (shared lib code)
+│   ├── platformio.ini      (two envs: gateway, node — see below)
+│   ├── src/
+│   │   ├── gateway_main.cpp
+│   │   └── node_main.cpp
+│   └── lib/
+│       └── CarSentinelCommon/  (shared: identity, config, diagnostics, watchdog, logging)
 └── tests/                  (host-side simulation tests, created per phase)
 ```
 
-Only `docs/`, `configs/hardware/` (as data, not code) are created in Phase 0. No
-firmware source is written yet, per the project's phase discipline (Section 64: "STOP
-after Phase 0").
+**Note on `firmware/` layout (decided in Phase 1):** the originally sketched
+`firmware/gateway/`, `firmware/node/`, `firmware/common/` split doesn't map cleanly onto
+PlatformIO, which expects one `src/` per project. Instead, both entry points
+(`gateway_main.cpp`, `node_main.cpp`) live in one `src/`, and each PlatformIO environment
+compiles only its own file via `build_src_filter`; shared logic lives in `lib/`, which
+PlatformIO's library finder picks up automatically for both environments. This keeps the
+"one generic image, two build targets" property without fighting the build tool.
+
+Only `docs/` and `configs/defaults/` were created in Phase 0/1. `configs/hardware/`
+(hardware profile JSON files) is still empty pending Phase 3.
 
 ## What Phase 0 deliberately does NOT do
 

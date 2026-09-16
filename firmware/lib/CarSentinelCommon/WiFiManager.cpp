@@ -1,5 +1,6 @@
 #include "WiFiManager.h"
 #include "Logger.h"
+#include "Watchdog.h"
 
 #include <WiFi.h>
 
@@ -42,6 +43,11 @@ bool WiFiManager::connectBlocking(const NetworkConfigData& config) {
 
         unsigned long attemptStart = millis();
         while (millis() - attemptStart < config.connectTimeoutMs) {
+            // This loop (and the retry delay below) runs synchronously inside setup(),
+            // well past the watchdog's timeout if left unfed — confirmed on real
+            // hardware: a task watchdog panic/reboot mid-connect, right where this used
+            // to be a bare delay(250).
+            Watchdog::feed();
             if (WiFi.status() == WL_CONNECTED) {
                 state = WiFiConnState::CONNECTED;
                 Logger::info(TAG, "Connected, IP=" + WiFi.localIP().toString());
@@ -53,7 +59,12 @@ bool WiFiManager::connectBlocking(const NetworkConfigData& config) {
         Logger::warn(TAG, "Connect attempt " + String(attempt) + " timed out");
         WiFi.disconnect();
         if (attempt < config.maxRetries) {
-            delay(config.retryIntervalMs);
+            // Same reasoning — a multi-second delay() here must not starve the watchdog.
+            unsigned long retryStart = millis();
+            while (millis() - retryStart < config.retryIntervalMs) {
+                Watchdog::feed();
+                delay(250);
+            }
         }
     }
 

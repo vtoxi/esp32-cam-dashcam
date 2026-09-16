@@ -26,6 +26,19 @@ bool CameraManager::initialized = false;
 #define CAM_PIN_PCLK 22
 
 bool CameraManager::begin() {
+    // Power-cycle the sensor via PWDN (active-high power-down on the OV2640) before
+    // init. Confirmed on real hardware: after a watchdog-triggered reboot (a soft
+    // reset, not a full power cycle), esp_camera_init failed with
+    // "SCCB_Write Failed... Camera probe failed" even though the previous boot's init
+    // had succeeded — a well-documented ESP32-CAM quirk where the sensor is left in a
+    // state a soft reset alone doesn't clear. This toggle is cheap and harmless on a
+    // clean boot too, so it's unconditional rather than only-on-retry.
+    pinMode(CAM_PIN_PWDN, OUTPUT);
+    digitalWrite(CAM_PIN_PWDN, HIGH);
+    delay(10);
+    digitalWrite(CAM_PIN_PWDN, LOW);
+    delay(10);
+
     camera_config_t config = {};
     config.ledc_channel = LEDC_CHANNEL_0;
     config.ledc_timer = LEDC_TIMER_0;
@@ -60,7 +73,17 @@ bool CameraManager::begin() {
 
     esp_err_t err = esp_camera_init(&config);
     if (err != ESP_OK) {
-        Logger::error(TAG, "esp_camera_init failed: 0x" + String(err, HEX));
+        Logger::warn(TAG, "esp_camera_init failed (0x" + String(err, HEX) +
+                     "), retrying once after a fresh power-cycle");
+        esp_camera_deinit();
+        digitalWrite(CAM_PIN_PWDN, HIGH);
+        delay(50);
+        digitalWrite(CAM_PIN_PWDN, LOW);
+        delay(50);
+        err = esp_camera_init(&config);
+    }
+    if (err != ESP_OK) {
+        Logger::error(TAG, "esp_camera_init failed after retry: 0x" + String(err, HEX));
         initialized = false;
         return false;
     }

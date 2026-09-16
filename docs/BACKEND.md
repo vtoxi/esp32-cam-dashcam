@@ -74,14 +74,18 @@ exactly.
 - **`RemoteSyncManager`** — owns everything Section 6 of the brief lists: connection
   state (its own small state machine, analogous to `TransportManager`'s but for
   Gateway↔Internet rather than Node↔Gateway — `LOCAL_ONLY` / `CONNECTING` /
-  `CONNECTED` / `AUTH_FAILED` / `RETRY_BACKOFF`), authentication, registration,
-  per-category sync policy (Section 7), retry/backoff, and drives the persisted queue
-  (Section 4 below). This is the single place Gateway code calls into — never scatter
-  `HttpClient` calls through `gateway_main.cpp`/`IncidentCorrelator`/etc. directly, the
-  same discipline already followed for ESP-NOW (`docs/NETWORK.md` Section 5's "never
-  call `EspNowManager::sendMessage()` from just anywhere" — well, today it still is
-  called from several places pre-`TransportManager`; the target is for backend calls to
-  not repeat that mistake from day one).
+  `CONNECTED` / `AUTH_FAILED` / `RETRY_BACKOFF`; `AUTH_FAILED` is defined but not yet
+  reachable — see Phase 21.2's own gap note), and drives the persisted queue
+  (**implemented**, Phase 21.3 — `BackendQueue`, bounded/LittleFS-persisted/
+  exponential-backoff, the same structural echo of `OfflineQueue` this document
+  originally proposed). This is the single place Gateway code calls into — never
+  scatter `HttpClient` calls through `gateway_main.cpp`/`IncidentCorrelator`/etc.
+  directly, the same discipline already followed for ESP-NOW (`docs/NETWORK.md`
+  Section 5's "never call `EspNowManager::sendMessage()` from just anywhere" — well,
+  today it still is called from several places pre-`TransportManager`; the target is
+  for backend calls to not repeat that mistake from day one). Authentication,
+  registration, and per-category sync-policy filtering (Section 7) remain
+  unimplemented — Phase 21.4+.
 - **`HttpBackend`** — the one concrete implementation this phase actually needs:
   REST over HTTPS (`WiFiClientSecure` + `HTTPClient`, already linked on the gateway
   build — see `docs/OTA.md`, same libraries `OtaManager` already uses). `mode` config

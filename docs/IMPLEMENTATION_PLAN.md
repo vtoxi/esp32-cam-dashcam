@@ -29,7 +29,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 18 | Vehicle Integration | Compiles clean (both envs) — capability-gated ignition-sense input drives DRIVING/PARKED when wired; OBD-II/CAN blocked on hardware, not yet started |
 | 19 | Dashboard | Compiles clean (both envs) — gateway-hosted single-page dashboard + JSON API + live camera stream proxy; pending physical bench test |
 | 20 | Vehicle Installation | Planning checklist documented (`docs/wiring/VEHICLE_INSTALLATION.md`) — no firmware component, no physical install has happened |
-| 21 | Remote Backend, API & Hybrid Connectivity | 21.1 (Audit) + 21.2 (Backend Abstraction) complete, compiles clean, not yet bench-tested (no server to test against). 21.3 onward not started |
+| 21 | Remote Backend, API & Hybrid Connectivity | 21.1 (Audit) + 21.2 (Backend Abstraction) + 21.3 (Persistent Remote Queue) complete, compiles clean, not yet bench-tested (no server to test against). 21.4 onward not started |
 
 ## Phase 0 — Repository & Hardware Discovery
 
@@ -1424,10 +1424,48 @@ in the node's call graph references it (confirmed: node flash size unchanged,
 actually talk to; `RemoteSyncManager` has only been verified to stay correctly inert
 when `LOCAL_ONLY` (build-level reasoning, not a live test).
 
+## Phase 21.3 — Persistent Remote Queue (complete)
+
+**Implemented** (gateway-only, `lib/CarSentinelGateway/BackendQueue.h/.cpp`): a
+bounded (50 items), LittleFS-persisted queue mirroring `OfflineQueue`'s
+design (`docs/IMPLEMENTATION_PLAN.md` Phase 21.2's own "not implemented" list),
+extended with what the Gateway↔Backend hop specifically needs beyond the Node↔Gateway
+one: a category tag (`HEARTBEAT`/`TELEMETRY`/`EVENT`/`INCIDENT`, matching
+`RemoteBackend`'s per-category send methods) and per-item exponential backoff
+(5s base, doubling, capped at 5 minutes — a local ESP-NOW hop and an Internet link to
+a possibly-down server fail very differently, so retrying every `loop()` the way
+`OfflineQueue`'s flush does wasn't appropriate here).
+
+`RemoteSyncManager`'s `sendTelemetry()`/`sendEvent()`/`sendIncident()` now enqueue on
+delivery failure instead of just returning `false` and discarding the payload;
+`loop()` calls `BackendQueue::flush()` every iteration (cheap when nothing is due —
+each item's own backoff timer gates whether `flush()` actually attempts it).
+Heartbeats are deliberately **not** queued — a stale liveness signal delivered
+minutes late carries a wrong `uptimeMs` and adds nothing the next on-time heartbeat
+won't already provide; only real data (telemetry/events/incidents) goes through the
+queue. `BACKENDSTATUS` (serial) and the dashboard Settings page's backend status line
+now report the pending queue count.
+
+**Not implemented in this sub-phase** (documented gap, not an oversight): no
+deduplication by event ID — would need to parse each JSON payload for an `id` field,
+deferred until a real backend (Phase 21.5) exists to verify the payload shape against
+first; no per-category retention policy — every category shares one bounded queue and
+one eviction rule (oldest evicted first when full), not differentiated by importance
+(e.g. an `INCIDENT` isn't protected from eviction by a flood of `TELEMETRY` items —
+worth revisiting once there's a real usage pattern to design against, not guessed at
+here).
+
+**Build status: compiles clean, both environments.** Node build unaffected —
+`BackendQueue` lives in the gateway-only library, confirmed by an unchanged node
+flash size (65.2%). **Not bench-tested** — same reason as Phase 21.2: no backend
+server exists yet to actually exercise retry/backoff against.
+
 ## Next Step
 
-Phase 21.3 (Persistent Remote Queue) — connect `RemoteSyncManager` to a durable,
-bounded, retry/backoff-aware queue (mirroring `OfflineQueue`'s existing design for the
-Node↔Gateway hop, per `docs/BACKEND.md` Section 6) rather than the current
-drop-on-failure behavior. Everything else in the project remains independent of Phase
-21 and can still be bench-tested in the meantime — Phase 21 stays purely additive.
+Phase 21.4 (Device Registration & Authentication) — implement Gateway registration
+with the backend and ensure the credential (`BackendConfig.credential`) is handled
+securely; this is also where `AUTH_FAILED` detection (deferred from 21.2) becomes
+worth adding, once there's a real distinction between "wrong credential" and
+"server unreachable" to detect. Everything else in the project remains independent of
+Phase 21 and can still be bench-tested in the meantime — Phase 21 stays purely
+additive.

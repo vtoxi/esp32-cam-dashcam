@@ -41,6 +41,7 @@
 #include "OtaManager.h"
 #include "BackendConfig.h"
 #include "RemoteSyncManager.h"
+#include "BackendQueue.h"
 
 #include <ArduinoJson.h>
 #include <LittleFS.h>
@@ -702,7 +703,8 @@ static void handleSerialCommands() {
         RemoteSyncManager::begin();
         Logger::info(TAG, "Backend sync disabled — LOCAL_ONLY");
     } else if (line == "BACKENDSTATUS") {
-        Logger::info(TAG, "Backend: " + String(backendConnectionStateToString(RemoteSyncManager::getState())));
+        Logger::info(TAG, "Backend: " + String(backendConnectionStateToString(RemoteSyncManager::getState())) +
+                     " queued=" + String(BackendQueue::count()) + "/" + String(BackendQueue::MAX_QUEUED));
     } else if (line == "WIFILIST") {
         const NetworkConfigData& net = NetworkConfig::get();
         Logger::info(TAG, "Saved Wi-Fi networks (" + String(net.savedCount) + "/" +

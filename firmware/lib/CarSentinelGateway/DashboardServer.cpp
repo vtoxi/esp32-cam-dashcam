@@ -4,6 +4,7 @@
 #include "EmailConfig.h"
 #include "BackendConfig.h"
 #include "RemoteSyncManager.h"
+#include "BackendQueue.h"
 
 #include <WebServer.h>
 #include <ArduinoJson.h>
@@ -262,7 +263,7 @@ function saveEmail(){
 }
 function loadBackend(){
   fetch('/api/settings/backend').then(function(r){return r.json();}).then(function(b){
-    document.getElementById('backendState').textContent = b.state;
+    document.getElementById('backendState').textContent = b.state + ' (' + b.queuedCount + ' queued)';
     document.getElementById('backendMode').value = b.mode;
     document.getElementById('backendUrl').value = b.baseUrl||'';
     document.getElementById('backendDeviceId').value = b.deviceId||'';
@@ -373,6 +374,7 @@ void DashboardServer::handleApiBackendGet() {
     doc["deviceId"] = b.deviceId;
     doc["hasCredential"] = b.credential.length() > 0;
     doc["state"] = backendConnectionStateToString(RemoteSyncManager::getState());
+    doc["queuedCount"] = BackendQueue::count();
     String out;
     serializeJson(doc, out);
     server.send(200, "application/json", out);

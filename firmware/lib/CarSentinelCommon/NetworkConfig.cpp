@@ -27,13 +27,12 @@ void NetworkConfig::migrate(int fromVersion) {
         Logger::info(TAG, "Migrated network config v1 -> v2 (single SSID folded into saved list)");
         // Falls through to v2->v3 below (a v1 config skips straight to v3 in one boot).
     }
-    if (fromVersion <= 2) {
-        // v2->v3 adds wifiFallbackEnabled — default true (loadFromDisk() already set it
-        // true via the struct default before this runs, since the field didn't exist in
-        // the old JSON), so this is a documentation no-op, not a behavior change: an
-        // existing device that already had Wi-Fi configured keeps working exactly as
-        // before. Only newly-provisioned ESP-NOW-only devices set it false explicitly.
-        Logger::info(TAG, "Migrated network config -> v3 (wifiFallbackEnabled defaults true)");
+    if (fromVersion <= 3) {
+        // v2->v3 added wifiFallbackEnabled, v3->v4 adds the TransportManager timing
+        // knobs — both default via the struct's own defaults (loadFromDisk() already
+        // applied them before this runs, since these fields didn't exist in older
+        // JSON), so this is a documentation no-op, not a behavior change.
+        Logger::info(TAG, "Migrated network config -> v4 (wifiFallbackEnabled + transport timing defaults)");
         return;
     }
     Logger::warn(TAG, "Network config schemaVersion " + String(fromVersion) +
@@ -73,6 +72,10 @@ bool NetworkConfig::loadFromDisk() {
     current.maxRetries = doc["maxRetries"] | 3;
     current.retryIntervalMs = doc["retryIntervalMs"] | 5000;
     current.wifiFallbackEnabled = doc["wifiFallbackEnabled"] | true;
+    current.espNowDiscoveryTimeoutMs = doc["espNowDiscoveryTimeoutMs"] | 15000;
+    current.espNowRetryIntervalMs = doc["espNowRetryIntervalMs"] | 30000;
+    current.espNowHeartbeatTimeoutMs = doc["espNowHeartbeatTimeoutMs"] | 60000;
+    current.wifiFallbackDelayMs = doc["wifiFallbackDelayMs"] | 5000;
 
     current.savedCount = 0;
     JsonArray savedArr = doc["saved"].as<JsonArray>();
@@ -131,6 +134,10 @@ bool NetworkConfig::save(const NetworkConfigData& data) {
     doc["maxRetries"] = current.maxRetries;
     doc["retryIntervalMs"] = current.retryIntervalMs;
     doc["wifiFallbackEnabled"] = current.wifiFallbackEnabled;
+    doc["espNowDiscoveryTimeoutMs"] = current.espNowDiscoveryTimeoutMs;
+    doc["espNowRetryIntervalMs"] = current.espNowRetryIntervalMs;
+    doc["espNowHeartbeatTimeoutMs"] = current.espNowHeartbeatTimeoutMs;
+    doc["wifiFallbackDelayMs"] = current.wifiFallbackDelayMs;
 
     JsonArray savedArr = doc["saved"].to<JsonArray>();
     for (uint8_t i = 0; i < current.savedCount; i++) {

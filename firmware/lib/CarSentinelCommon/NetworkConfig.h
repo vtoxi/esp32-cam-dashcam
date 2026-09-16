@@ -11,7 +11,7 @@
 //     Wi-Fi password (Section 41: no credentials in logs).
 namespace CarSentinel {
 
-constexpr int NETWORK_SCHEMA_VERSION = 3;
+constexpr int NETWORK_SCHEMA_VERSION = 4;
 constexpr uint8_t MAX_SAVED_NETWORKS = 5;
 
 struct WifiNetwork {
@@ -48,6 +48,15 @@ struct NetworkConfigData {
     // this flag existed; a pure ESP-NOW node sets it false explicitly (WIFIFALLBACK
     // OFF serial command, or the dashboard Settings page).
     bool wifiFallbackEnabled = true;
+
+    // docs/NETWORK.md Section 6's config-timing knobs, added here (not a new file —
+    // same reasoning as everything else in this struct) since they're all
+    // "how this device decides which transport to use" settings. Consumed by
+    // TransportManager.
+    uint32_t espNowDiscoveryTimeoutMs = 15000;  // how long to wait for a gateway HELLO/HEARTBEAT before considering Wi-Fi fallback
+    uint32_t espNowRetryIntervalMs = 30000;     // how often to retry ESP-NOW while in WIFI_CONNECTED or STANDALONE
+    uint32_t espNowHeartbeatTimeoutMs = 60000;  // how long since the gateway's last heartbeat before it's considered lost
+    uint32_t wifiFallbackDelayMs = 5000;        // grace period after ESP-NOW discovery fails before Wi-Fi fallback engages
 
     String hostname;              // defaults to nodeId-derived value at first save
     bool useStaticIP = false;

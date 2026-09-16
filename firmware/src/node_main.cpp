@@ -29,6 +29,8 @@
 #include "MotionEventEngine.h"
 #include "EvidenceManager.h"
 #include "EspNowManager.h"
+#include "TransportManager.h"
+#include "OfflineQueue.h"
 #include "PeerRegistry.h"
 #include "StatusPage.h"
 #include "SecurityModeConfig.h"
@@ -259,7 +261,7 @@ static void captureAndRecordEvent(const String& eventType, const String& severit
     // MANUAL_TEST events stay local, matching its own "manual test" intent.
     if (eventType == "MOTION_DETECTED") {
         if (!espNowActive) {
-            Logger::info(TAG, "ESP-NOW inactive (provisioning mode) — event remains local only");
+            Logger::info(TAG, "ESP-NOW never came up on this boot — event remains local only");
         } else {
             JsonDocument doc;
             doc["eventId"] = eventId.isEmpty() ? "unsaved" : eventId;
@@ -272,20 +274,22 @@ static void captureAndRecordEvent(const String& eventType, const String& severit
             String payload;
             serializeJson(doc, payload);
 
-            uint8_t gatewayMac[6];
-            bool haveGateway = EspNowManager::findGatewayMac(gatewayMac);
-            bool sent = EspNowManager::sendMessage(EspNowMessageType::MOTION_DETECTED, payload,
-                                                    haveGateway ? gatewayMac : nullptr);
-            Logger::info(TAG, sent
-                ? (haveGateway ? "Forwarded event to gateway via ESP-NOW (awaiting ACK)"
-                                : "Gateway not yet discovered — broadcast event, no ACK tracked")
-                : "ESP-NOW forward failed — event remains local only (no persistent offline "
-                  "queue yet, Section 28/Phase 28)");
+            // docs/NETWORK.md Section 4/5: routed through TransportManager rather than
+            // EspNowManager directly — if the gateway isn't reachable right now, the
+            // event is queued (OfflineQueue) instead of lost, and flushed automatically
+            // once ESP-NOW reconnects.
+            bool sent = TransportManager::sendEvent(EspNowMessageType::MOTION_DETECTED, payload);
+            Logger::info(TAG, sent ? "Forwarded event to gateway via ESP-NOW"
+                                    : "Gateway unreachable — event queued for delivery once reconnected");
 
             // Section 18: tell other cameras to grab a synchronized snapshot too, so the
             // gateway can correlate multiple angles under one incident. Broadcast (not
             // targeted at any specific peer) and best-effort — no ACK/retry tracking,
-            // consistent with how HELLO/HEARTBEAT broadcasts already work.
+            // consistent with how HELLO/HEARTBEAT broadcasts already work. Not routed
+            // through TransportManager: this is a peer-to-peer fan-out, not a
+            // node-to-gateway event, so queueing it for later delivery wouldn't be
+            // meaningful (the synchronized-capture window has passed by the time it'd
+            // flush).
             JsonDocument reqDoc;
             reqDoc["triggerNodeId"] = dev.nodeId;
             reqDoc["triggerEventId"] = eventId.isEmpty() ? "unsaved" : eventId;
@@ -384,6 +388,8 @@ static void handleSerialCommands() {
         bool haveGw = EspNowManager::findGatewayMac(gwMac);
         Logger::info(TAG, "espnow.active=" + String(espNowActive) + " peers=" +
                      String(PeerRegistry::count()) + " gatewayDiscovered=" + String(haveGw));
+        Logger::info(TAG, "transport=" + String(transportStateToString(TransportManager::getState())) +
+                     " queuedEvents=" + String(OfflineQueue::count()));
         Logger::info(TAG, "securityMode=" + String(securityModeToString(SecurityModeConfig::getMode())));
         Diagnostics::logSnapshot(TAG);
     } else if (line == "WIFILIST") {
@@ -476,6 +482,8 @@ static String buildStatusHtml() {
     html += "<table>";
     html += "<tr><td class=k>Security Mode</td><td>" + String(securityModeToString(SecurityModeConfig::getMode())) + "</td></tr>";
     html += "<tr><td class=k>ESP-NOW</td><td>" + String(espNowActive ? "active" : "inactive") + "</td></tr>";
+    html += "<tr><td class=k>Transport</td><td>" + String(transportStateToString(TransportManager::getState())) +
+            " (" + String(OfflineQueue::count()) + " queued)</td></tr>";
     html += "<tr><td class=k>Known peers</td><td>" + String(PeerRegistry::count()) + "</td></tr>";
     html += "<tr><td class=k>Gateway discovered</td><td>" + String(haveGw ? "yes" : "no") + "</td></tr>";
     html += "</table>";
@@ -543,6 +551,7 @@ void setup() {
     if (espNowActive) {
         EspNowManager::setOnMessageHandler(onEspNowMessage);
     }
+    TransportManager::begin();
 
     // Wi-Fi is a fallback, independent of ESP-NOW's state — only touched at all if
     // wifiFallbackEnabled (default true, preserving today's behavior for anyone
@@ -604,6 +613,7 @@ void loop() {
         if (espNowActive) {
             EspNowManager::loop();
         }
+        TransportManager::loop();
         // Covers the case where Wi-Fi wasn't connected yet at boot (setup() only starts
         // the page immediately on a successful connect) but WiFiManager reconnects later.
         if (!StatusPage::isActive() && WiFiManager::isConnected()) {

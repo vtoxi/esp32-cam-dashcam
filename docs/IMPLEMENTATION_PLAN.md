@@ -29,7 +29,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 18 | Vehicle Integration | Compiles clean (both envs) — capability-gated ignition-sense input drives DRIVING/PARKED when wired; OBD-II/CAN blocked on hardware, not yet started |
 | 19 | Dashboard | Compiles clean (both envs) — gateway-hosted single-page dashboard + JSON API + live camera stream proxy; pending physical bench test |
 | 20 | Vehicle Installation | Planning checklist documented (`docs/wiring/VEHICLE_INSTALLATION.md`) — no firmware component, no physical install has happened |
-| 21 | Remote Backend, API & Hybrid Connectivity | Sub-phase 21.1 (Architecture Audit) complete — `docs/BACKEND.md`/`docs/REMOTE_ACCESS.md` produced. 21.2 onward not started |
+| 21 | Remote Backend, API & Hybrid Connectivity | 21.1 (Audit) + 21.2 (Backend Abstraction) complete, compiles clean, not yet bench-tested (no server to test against). 21.3 onward not started |
 
 ## Phase 0 — Repository & Hardware Discovery
 
@@ -1390,7 +1390,44 @@ can be verified by build alone (no server to talk to yet, same "compiles clean, 
 yet bench-tested" pattern used throughout this project), while 21.5 is the first
 sub-phase requiring an actual backend deployment to test against.
 
+## Phase 21.2 — Backend Abstraction (complete)
+
+**Implemented** (gateway-only): `RemoteBackend` (interface — `begin`/`isConnected`/
+`sendHeartbeat`/`sendTelemetry`/`sendEvent`/`sendIncident`), `HttpBackend` (the one
+implementation — REST/HTTPS, `HTTPClient`+`WiFiClientSecure`, Bearer-token auth),
+`RemoteSyncManager` (`LOCAL_ONLY`/`CONNECTING`/`CONNECTED`/`AUTH_FAILED`/
+`RETRY_BACKOFF` state machine, periodic heartbeat, pass-through send methods), and
+`BackendConfig` (`lib/CarSentinelCommon/`, same versioned-JSON-per-concern tier as
+`NetworkConfig`/`EmailConfig` — `mode`, `baseUrl`, `deviceId`, `tenantId`,
+`credential`, per-category sync-policy fields not yet consumed by any call site).
+`BACKENDCONFIG`/`BACKENDENABLE`/`BACKENDDISABLE`/`BACKENDSTATUS` serial commands and a
+new Remote Backend section on the dashboard's Settings page
+(`GET`/`POST /api/settings/backend`).
+
+**Local-first guarantee enforced, not just configured**: `BackendConfig.enabled`
+defaults `false`; `RemoteSyncManager::loop()` returns immediately (no state check, no
+network call, no CPU cost beyond the one comparison) whenever disabled.
+
+**Not implemented in this sub-phase** (tracked for later sub-phases, not an
+oversight): no retry/backoff/persisted queue — a failed send is currently just
+dropped (Phase 21.3 is exactly this); no automatic call sites feeding real
+telemetry/events/incidents into `RemoteSyncManager` (deciding how `BackendConfig`'s
+`SyncPolicy` filters what gets sent is deferred until there's a real backend, Phase
+21.5, to verify payloads against); no `AUTH_FAILED` detection (`HttpBackend::post()`
+doesn't expose the HTTP status code yet, so "wrong credential" and "server
+unreachable" both currently land in `RETRY_BACKOFF`).
+
+**Build status: compiles clean, both environments.** Node build unaffected —
+`BackendConfig` is gateway-only in practice; `--gc-sections` strips it since nothing
+in the node's call graph references it (confirmed: node flash size unchanged,
+65.2%). **Not bench-tested** — there is no backend server yet for `HttpBackend` to
+actually talk to; `RemoteSyncManager` has only been verified to stay correctly inert
+when `LOCAL_ONLY` (build-level reasoning, not a live test).
+
 ## Next Step
 
-Per the Phase 21 brief's own instruction: stop after the audit. Phase 21.2 (Backend
-Abstraction) is the next sub-phase once resumed.
+Phase 21.3 (Persistent Remote Queue) — connect `RemoteSyncManager` to a durable,
+bounded, retry/backoff-aware queue (mirroring `OfflineQueue`'s existing design for the
+Node↔Gateway hop, per `docs/BACKEND.md` Section 6) rather than the current
+drop-on-failure behavior. Everything else in the project remains independent of Phase
+21 and can still be bench-tested in the meantime — Phase 21 stays purely additive.

@@ -28,7 +28,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 17 | Low-Power Parked Mode | Compiles clean (both envs) — Wi-Fi modem sleep in PARKED mode only; full deep-sleep deliberately scoped out (see below) |
 | 18 | Vehicle Integration | Compiles clean (both envs) — capability-gated ignition-sense input drives DRIVING/PARKED when wired; OBD-II/CAN blocked on hardware, not yet started |
 | 19 | Dashboard | Compiles clean (both envs) — gateway-hosted single-page dashboard + JSON API + live camera stream proxy; pending physical bench test |
-| 20 | Vehicle Installation | Not applicable to firmware — physical install phase, tracked in docs/wiring/ only |
+| 20 | Vehicle Installation | Planning checklist documented (`docs/wiring/VEHICLE_INSTALLATION.md`) — no firmware component, no physical install has happened |
 
 ## Phase 0 — Repository & Hardware Discovery
 
@@ -1189,15 +1189,25 @@ port and pinout are actually characterized.
 compiled in). **Not yet bench-tested** — no physical ignition-sense circuit has been
 wired or read from yet.
 
+## Phase 20 — Vehicle Installation
+
+**No firmware component.** `docs/wiring/VEHICLE_INSTALLATION.md` documents the planned
+install sequence (mounting, power taps, ignition-sense tap, GPS antenna placement,
+SD-card accessibility, post-install re-verification of every prior phase) and its
+prerequisites — chiefly that every phase's "Not yet bench-tested" item gets resolved on
+the bench first, and that a real (not simulated) ignition-sense circuit is built and
+tested before it ever touches the vehicle's actual wiring. This is a checklist, not a
+completed install: nothing in it has been executed against the real Peugeot 2008 yet.
+
 ## Next Step
 
-Flash both the gateway and a node and bench-test Phases 13/14/15/16/17/18/19 together:
-confirm the OLED displays render, exercise `OTACHECK`/`OTAUPDATE` on the gateway,
-trigger a real incident and confirm the AI assessment's severity/reasoning make sense
-and that a LOW-scored one is correctly skipped for email, measure actual current draw
-in PARKED vs. other modes, wire a real ignition-sense circuit and confirm
-DRIVING/PARKED tracks it correctly, and open the dashboard to confirm live data end to
-end. Phase 20 (Vehicle Installation) is a physical install phase with no firmware
-component of its own — it depends on all of the above being bench-verified first, and
-on the actual vehicle being available for the install; not applicable to further
-firmware work until then.
+All 20 phases now have either working firmware or (Phase 20) a documented plan. The
+project's own "one phase at a time, stop for review" discipline (Section 64/76) has
+been running ahead of physical bench verification for a while now — Phases 4/5/6/8/10
+have some real-hardware confirmation, but 7/9/11/12/13/14/15/16/17/18/19 are all still
+"compiles clean, not yet bench-tested." **The actual next step is hardware, not more
+code:** flash both environments, work through each phase's bench-test checklist in
+order, fix whatever real bugs that surfaces (the established pattern all session —
+watchdog timing, camera reinit, mojibake, rename-sync, the OTA IRAM overflow — were all
+found this way, not by writing more firmware blind), and only then move toward Phase 20's
+actual vehicle install.

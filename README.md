@@ -4,9 +4,10 @@ A modular, configuration-driven, distributed ESP32 vehicle dashcam, security, te
 and black-box platform — built for a Peugeot 2008 prototype install, designed to run on
 any vehicle.
 
-> **Status: Phases 0–19 implemented** (Phase 20 Vehicle Installation is a physical
-> install phase with no firmware component — see below). Boot/identity/config
-> (Phase 1), BLE+AP provisioning (Phase 2), capability-gated
+> **Status: all 20 phases now have either working firmware or a documented plan**
+> (Phase 20 Vehicle Installation is a physical install phase with no firmware
+> component — a planning checklist lives in `docs/wiring/VEHICLE_INSTALLATION.md`).
+> Boot/identity/config (Phase 1), BLE+AP provisioning (Phase 2), capability-gated
 > hardware init (Phase 3), a working motion → confirm → capture → local-evidence
 > pipeline (Phase 4), node-to-gateway ESP-NOW communication (Phase 5), a zero-code
 > auto-populating gateway device registry with remote commands (Phase 6), cross-camera

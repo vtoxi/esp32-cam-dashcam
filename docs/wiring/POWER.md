@@ -72,10 +72,13 @@ N/A.
 
 ## 9. Known Conflicts
 
-None at the prototype-power level; future vehicle-power integration (ignition sensing,
-battery voltage monitoring) is designed for in software (`IgnitionState`,
-`BatteryVoltage`, `PowerState` interfaces — Section 42) but not implemented until Phase
-18, after bench testing, and only with a properly engineered electrical isolation design.
+None at the prototype-power level. Phase 18 added the software side of ignition
+sensing (`IgnitionSense`, gated by `CapabilitiesConfig.ignition`/`ignitionGpio` —
+disabled by default on every hardware profile) — but the electrical side (the actual
+voltage-divider/optocoupler circuit stepping the vehicle's ignition-switched 12V line
+down to safe 3.3V logic) is not yet built or tested. Do not wire a node's GPIO directly
+to any vehicle 12V line under any circumstances. Battery-voltage monitoring remains
+unimplemented in both software and hardware.
 
 ## 10. Safety Warnings
 

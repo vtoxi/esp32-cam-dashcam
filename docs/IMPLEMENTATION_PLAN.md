@@ -17,7 +17,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 6 | Dynamic Node Management | Compiles clean (both envs) — pending physical two-device bench test |
 | 7 | Multi-Camera Correlation | Compiles clean (both envs) — pending multi-device bench test |
 | 8 | GPS | Compiles clean (both envs) — pending physical GPS module bench test |
-| 9 | MPU6050 | Not started |
+| 9 | MPU6050 | Compiles clean (both envs) — pending physical IMU bench test |
 | 10 | Driving / Parking Modes | Not started |
 | 11 | Incident & Evidence Engine | Not started |
 | 12 | Email Notification | Not started |
@@ -531,5 +531,66 @@ with a physical GPS module** — no code here has seen a real NMEA stream.
 Flash all firmware and bench-test Phases 5–8 together: two camera nodes triggering
 correlated motion events (Phase 5/6/7), and the gateway's GPS module outdoors or near a
 window to confirm `GpsManager` actually acquires a fix and `STATUS`/incident-location
-logs show real coordinates, not just `{"status":"NO_FIX"}`. Once that's solid, continue
-with Phase 9 (MPU6050).
+logs show real coordinates, not just `{"status":"NO_FIX"}`.
+
+## Phase 9 — MPU6050
+
+**Implemented:**
+- `ImuManager` — direct MPU6050 register access via new `I2CBusManager::writeRegister`/
+  `readRegisters` primitives, **no external MPU6050 library**. Deliberate choice: the
+  register map (wake via `PWR_MGMT_1`, burst-read 14 bytes from `ACCEL_XOUT_H` covering
+  accel+temp+gyro) is small and stable, and every earlier phase that pulled in a new
+  third-party library needed at least one guessed-API compile-fix pass — this sidesteps
+  that risk entirely for a driver this simple. Confirmed the exact `Wire.h`
+  `endTransmission(bool)`/`requestFrom(int,int)` signatures against this toolchain's
+  installed header before writing `I2CBusManager`'s new methods, same discipline as
+  Phase 5's ESP-NOW work.
+- Computes acceleration magnitude and angular velocity magnitude (vector magnitude of
+  the three axes, in g and deg/s respectively) — Section 22's explicit deliverable.
+  Default scale factors assume the MPU6050's power-on-default full-scale ranges
+  (±2g, ±250°/s); the driver doesn't reconfigure them.
+- `ImuThresholdsData` — persisted (`/config/imu_thresholds.json`), not hardcoded, per
+  Section 23's explicit instruction that thresholds need real-world tuning. New
+  `IMUTHRESHOLDS <accelG> <gyroDps>` gateway serial command to tune them without
+  hand-editing JSON or reflashing.
+- `ImuManager::checkImpact()` — Section 23's hard requirement respected exactly: this
+  reports **`IMPACT_EVENT` with raw measurements attached, never a crash determination**.
+  A 5-second (configurable) cooldown after a threshold crossing prevents one sustained
+  event from spamming incidents.
+- `gateway_main.cpp`: polls the IMU every 100ms (frequent enough to catch a sharp,
+  short-duration impact) once `ImuManager` confirms the device is actually present
+  (skips init entirely if the Phase 3 presence probe found nothing — never touches
+  absent hardware). A threshold crossing opens an `IncidentCorrelator` incident the same
+  way a node's `MOTION_DETECTED` does, but locally — the gateway is both sensor source
+  and incident-opener here, no ESP-NOW round trip needed. `STATUS` reports the live
+  accel/gyro magnitudes and current thresholds.
+
+**Not implemented (by design, later phases):** sending IMU readings to nodes or
+persisting them into an actual incident *record* (Phase 11 owns the real incident
+schema — this phase only proves detection + threshold logic + logging). Driving-mode
+behaviors (hard braking, sharp turning as distinct classified events, not just a raw
+magnitude threshold) are Section 22's "Driving" use-case bullet, not this phase's
+"implement the IMU subsystem" scope.
+
+**Build status: compiles clean, both environments** (verified directly — first attempt,
+no fixes needed, node 19.1%/42.4%). **Not yet bench-tested with a physical MPU6050** —
+register-level I2C code has not been run against real silicon.
+
+**Known limitations / risks to verify on hardware:**
+- Scale factor constants (16384 LSB/g, 131 LSB/°/s) assume default full-scale range
+  registers — if the specific MPU6050/HW-123 unit doesn't power up at those defaults
+  (unlikely per datasheet, but unverified on this physical unit), readings would be
+  scaled wrong without any error being raised.
+- Threshold defaults (2.5g, 200°/s, 5s cooldown) are placeholders per Section 23's own
+  instruction — expect to need real tuning once mounted in a vehicle.
+- `checkImpact()`'s "at rest" baseline is the raw magnitude (~1g from gravity alone,
+  not gravity-subtracted) — this is a coarse approximation appropriate for a first pass,
+  not a calibrated inertial measurement.
+
+## Next Step
+
+Flash the gateway and bench-test Phases 8–9 together: confirm `STATUS` shows a plausible
+resting accel magnitude (~1.0g) and near-zero gyro, then physically tap/shake the board
+to confirm an `IMPACT_EVENT` fires, opens an incident, and respects its cooldown.
+Combined with GPS, confirm the incident's location line shows real coordinates outdoors.
+Once that's solid, continue with Phase 10 (Driving / Parking Modes).

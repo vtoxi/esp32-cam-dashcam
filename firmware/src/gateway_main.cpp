@@ -1,12 +1,11 @@
 // CarSentinel Gateway — Phase 1 (device foundation) + Phase 2 (BLE/Wi-Fi provisioning)
 // + Phase 3 (hardware capability layer) + Phase 5 (ESP-NOW) + Phase 6 (dynamic node
-// management) + Phase 7 (multi-camera correlation) + Phase 8 (GPS).
+// management) + Phase 7 (multi-camera correlation) + Phase 8 (GPS) + Phase 9 (MPU6050).
 //
 // Hardware capabilities (I2C buses for IMU/OLED, GPS UART) are initialized before
 // Wi-Fi/provisioning for the same reason as the node: they shouldn't depend on network
-// state. IMU/OLED driver logic (reading accel/gyro, rendering pages) is still
-// Phase 9/13 — GPS is now fully implemented (GpsManager, real NMEA parsing), superseding
-// Phase 3's byte-liveness-only GpsUart.
+// state. OLED page rendering is still Phase 13 — GPS (Phase 8) and IMU (Phase 9) are now
+// fully implemented, superseding Phase 3's presence-detection-only stubs.
 
 #include <Arduino.h>
 #include "Logger.h"
@@ -22,6 +21,7 @@
 #include "CapabilitiesConfig.h"
 #include "I2CBusManager.h"
 #include "GpsManager.h"
+#include "ImuManager.h"
 #include "EspNowManager.h"
 #include "PeerRegistry.h"
 #include "DeviceRegistry.h"
@@ -91,6 +91,27 @@ static void onEspNowMessage(const EspNowMessage& msg, const uint8_t mac[6]) {
 
 static const uint8_t MPU6050_I2C_ADDR = 0x68;
 static const uint8_t SSD1306_I2C_ADDR = 0x3C;
+static uint32_t nextImuEventNumber = 1;
+
+// Section 23: the gateway is both the sensor source and the incident-opener here (no
+// ESP-NOW round trip needed — it's the gateway's own IMU), so this mirrors the
+// MOTION_DETECTED handling in onEspNowMessage() but triggers locally. Reports
+// IMPACT_EVENT with raw measurements; never claims a crash occurred.
+static void reportImuImpact(const ImuReading& reading) {
+    char idBuf[24];
+    snprintf(idBuf, sizeof(idBuf), "IMU-%06u", (unsigned int)(nextImuEventNumber++));
+    String eventId = String(idBuf);
+    const DeviceConfigData& cfg = DeviceConfig::get();
+
+    String incidentId = IncidentCorrelator::startIncident(cfg.nodeId, eventId);
+    Logger::warn(TAG, incidentId + " IMPACT_EVENT " + eventId +
+                 " accelMagnitudeG=" + String(reading.accelMagnitudeG, 2) +
+                 " gyroMagnitudeDps=" + String(reading.gyroMagnitudeDps, 1) +
+                 " raw accel(g)=[" + String(reading.accelXg, 2) + "," + String(reading.accelYg, 2) +
+                 "," + String(reading.accelZg, 2) + "] gyro(dps)=[" + String(reading.gyroXdps, 1) +
+                 "," + String(reading.gyroYdps, 1) + "," + String(reading.gyroZdps, 1) + "]");
+    Logger::info(TAG, incidentId + " location: " + GpsManager::toJson());
+}
 
 static void enterProvisioningMode() {
     provisioningMode = true;
@@ -180,6 +201,11 @@ static void initHardwareCapabilities() {
     if (caps.imu) {
         bool present = I2CBusManager::isPresent(0, MPU6050_I2C_ADDR);
         Logger::info(TAG, String("MPU6050 (0x68) on bus 0: ") + (present ? "PRESENT" : "NOT FOUND"));
+        if (present) {
+            ImuManager::begin(0, MPU6050_I2C_ADDR);
+        } else {
+            Logger::info(TAG, "Skipping ImuManager init — device not present");
+        }
     }
     if (caps.display && caps.displayCount >= 1) {
         bool present = I2CBusManager::isPresent(0, SSD1306_I2C_ADDR);
@@ -230,6 +256,15 @@ static void handleSerialCommands() {
                      " display=" + String(caps.display) + "(" + String(caps.displayCount) + ")");
         if (caps.gps) {
             Logger::info(TAG, "gps: " + GpsManager::toJson());
+        }
+        if (caps.imu && ImuManager::isInitialized()) {
+            ImuReading r = ImuManager::read();
+            const ImuThresholdsData& t = ImuManager::getThresholds();
+            Logger::info(TAG, "imu: accelMagnitudeG=" + String(r.accelMagnitudeG, 2) +
+                         " gyroMagnitudeDps=" + String(r.gyroMagnitudeDps, 1) +
+                         " thresholds(accelG=" + String(t.accelMagnitudeG, 2) +
+                         ", gyroDps=" + String(t.gyroMagnitudeDps, 1) +
+                         ", cooldownMs=" + String(t.cooldownMs) + ")");
         }
         Logger::info(TAG, "espnow.active=" + String(espNowActive) + " peers=" + String(PeerRegistry::count()));
         for (uint8_t i = 0; i < PeerRegistry::count(); i++) {
@@ -298,6 +333,24 @@ static void handleSerialCommands() {
         String nodeId, unused;
         splitArgs(line, nodeId, unused);
         sendNodeCommand(nodeId, "FACTORY_RESET", "");
+    } else if (line.startsWith("IMUTHRESHOLDS")) {
+        // Section 23: thresholds are placeholder defaults meant to be tuned against real
+        // driving data — this is that tuning knob, without needing to hand-edit
+        // /config/imu_thresholds.json or reflash.
+        String accelStr, gyroStr;
+        splitArgs(line, accelStr, gyroStr);
+        if (accelStr.isEmpty() || gyroStr.isEmpty()) {
+            ImuThresholdsData t = ImuManager::getThresholds();
+            Logger::info(TAG, "Usage: IMUTHRESHOLDS <accelG> <gyroDps>  (current: accelG=" +
+                         String(t.accelMagnitudeG, 2) + " gyroDps=" + String(t.gyroMagnitudeDps, 1) + ")");
+        } else {
+            ImuThresholdsData t = ImuManager::getThresholds();
+            t.accelMagnitudeG = accelStr.toFloat();
+            t.gyroMagnitudeDps = gyroStr.toFloat();
+            ImuManager::setThresholds(t);
+            Logger::info(TAG, "IMU thresholds updated: accelG=" + String(t.accelMagnitudeG, 2) +
+                         " gyroDps=" + String(t.gyroMagnitudeDps, 1));
+        }
     }
 }
 
@@ -365,7 +418,7 @@ void setup() {
 
     Logger::info(TAG, "Boot complete. Serial commands: STATUS, FACTORY_RESET, PROVISION, "
                  "DEVICES, RENAME <id> <name>, ENABLE <id>, DISABLE <id>, REMOVE <id>, "
-                 "SETROLE <id> <role>, RESTART <id>, RESET <id>");
+                 "SETROLE <id> <role>, RESTART <id>, RESET <id>, IMUTHRESHOLDS <accelG> <gyroDps>");
     Diagnostics::logSnapshot(TAG);
 }
 
@@ -394,6 +447,16 @@ void loop() {
     // and must be drained regularly to avoid losing data to a full UART buffer.
     if (caps.gps) {
         GpsManager::loop();
+    }
+
+    static unsigned long lastImuRead = 0;
+    const unsigned long IMU_READ_INTERVAL_MS = 100;  // frequent enough to catch a sharp impact
+    if (caps.imu && ImuManager::isInitialized() && now - lastImuRead >= IMU_READ_INTERVAL_MS) {
+        lastImuRead = now;
+        ImuReading reading = ImuManager::read();
+        if (ImuManager::checkImpact(reading)) {
+            reportImuImpact(reading);
+        }
     }
 
     if (now - lastDiagnosticsLog >= DIAGNOSTICS_INTERVAL_MS) {

@@ -22,12 +22,12 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 11 | Incident & Evidence Engine | Compiles clean (both envs) — pending physical bench test |
 | 12 | Email Notification | Compiles clean (both envs) — pending real SMTP bench test |
 | 13 | OLED Displays | Compiles clean (both envs) — pending physical OLED bench test |
-| 14 | OTA | Not started |
+| 14 | OTA | Gateway: compiles clean, real MANUAL-mode HTTP(S) update flow. Node: scoped out — classic ESP32 IRAM budget can't fit it alongside camera/WiFi/BLE (real measured link failure, see below) |
 | 15 | AI Framework | Not started |
 | 16 | AI Security Assistance | Not started |
 | 17 | Low-Power Parked Mode | Not started |
 | 18 | Vehicle Integration | Not started |
-| 19 | Dashboard | Not started |
+| 19 | Dashboard | Compiles clean (both envs) — gateway-hosted single-page dashboard + JSON API + live camera stream proxy; pending physical bench test |
 | 20 | Vehicle Installation | Not started |
 
 ## Phase 0 — Repository & Hardware Discovery
@@ -982,10 +982,123 @@ anything from this code yet.
   layout/readability on an actual 128×64 screen — line lengths were estimated from the
   font's nominal character width, not measured against a real render.
 
+## Phase 14 — OTA
+
+**Implemented (gateway):**
+- `OtaManager` — `fetchManifest(url)` parses `{version, url, md5, hardwareProfile}` over
+  `HTTPClient`; `isUpdateNeeded()` refuses a mismatched `hardwareProfile` (Section 37 —
+  never flash the wrong board's binary) and a no-op version match; `performUpdate()`
+  streams the image directly into `Update` (no full-image buffering — the ESP32 doesn't
+  have RAM for that), verifies MD5 via `Update.setMD5()`, and restarts on success —
+  device is left unchanged on any failure along the way (short write, MD5 mismatch,
+  low free heap). MANUAL trigger only (`OTACHECK <url>` / `OTAUPDATE <url>` serial
+  commands) — Section 36 explicitly warns against blind AUTO/STAGED updates, deferred
+  rather than rushed.
+- `Update.onProgress()` calls `Watchdog::feed()` every callback — same lesson as every
+  other multi-second blocking call this project has hit (Wi-Fi connect, SMTP dialogue).
+- `confirmHealthyBoot()` (both roles) calls `esp_ota_mark_app_valid_cancel_rollback()`
+  near the end of `setup()`; harmless no-op if the bootloader wasn't built with rollback
+  support (not verified either way in this toolchain — documented as such, not claimed
+  as guaranteed).
+- `board_build.partitions = min_spiffs.csv` on `[env:node]` — the `esp32cam` board's
+  default `huge_app.csv` has only one app partition, making standard `Update.h` OTA
+  physically impossible regardless of application code. `min_spiffs.csv` gives each
+  slot ~1.92MB (current build ~1.3MB, comfortable) and a 128KB LittleFS partition
+  (configs only — evidence images stay on SD).
+
+**Not implemented on the node — real hardware constraint, not a choice deferred for
+later convenience:** linking `HTTPClient`/`Update.h` (whose flash-write path needs
+IRAM-resident code) alongside the node's existing WiFi/BLE/camera/SD_MMC footprint
+overflowed classic ESP32's fixed IRAM region — a genuine `ld.exe` link failure, not a
+guess. Fixed in stages, each independently confirmed by rebuilding:
+1. `-flto` on `[env:node]`: 512 → 408 bytes over.
+2. Disabling NimBLE's central/observer roles (`BLEProvisioning.cpp` only ever acts as a
+   peripheral/server, never scans or connects as a client —
+   `CONFIG_BT_NIMBLE_ROLE_CENTRAL_DISABLED` / `..._OBSERVER_DISABLED`): 408 → 52 bytes.
+3. Dropping `WiFiClientSecure`/TLS from the node's own OTA path (node OTA now only
+   accepts plain `http://`, refusing `https://` with a clear log message) and moving
+   `Adafruit SSD1306`/`GFX` out of the global `lib_deps` into `[env:gateway]`-only
+   (they were being force-linked into both environments regardless of use — moving
+   `DisplayManager.cpp` to a separate `lib/CarSentinelGateway/` folder alone didn't
+   help, since PlatformIO's LDF still force-links explicitly declared `lib_deps`
+   regardless of `#include` chains): no further change — confirmed neither was
+   actually being pulled into the node's IRAM at link time to begin with.
+4. Every further NimBLE trim tried (`CONFIG_BT_NIMBLE_LOG_LEVEL`,
+   `CONFIG_BT_NIMBLE_MAX_CONNECTIONS`, `-fipa-icf`) made no further difference — the
+   remaining ~52 bytes are baked into Espressif's prebuilt WiFi/BT SDK archives, not
+   reconfigurable from application code or PlatformIO's `platformio.ini` without
+   rebuilding the toolchain's own components.
+
+Given that hard floor, `OtaManager.cpp`'s node build (`#if !CARSENTINEL_ROLE_GATEWAY`)
+is now a stub that logs "not supported on this hardware profile" and returns `false` —
+`HTTPClient.h`/`Update.h`/`WiFiClientSecure.h` are not even included on that path, so
+none of their object code is pulled into the node link at all. `confirmHealthyBoot()`
+(cheap, `esp_ota_ops.h` only) still runs on both roles.
+
+**Build status: compiles clean, both environments** (verified directly after each of
+the fixes above — node RAM 19.0%/Flash 64.6%, gateway RAM 18.1%/Flash 20.0%).
+
+**Known limitations:**
+- Node camera firmware currently has no self-update path. Revisit if node-side IRAM
+  headroom improves (a future board swap off classic ESP32, or an Espressif toolchain
+  change) — tracked here, not silently dropped from the spec.
+- Node OTA (if ever re-enabled) would be `http://`-only; TLS was the first thing traded
+  away for IRAM headroom.
+- `esp_ota_mark_app_valid_cancel_rollback()`'s real effect depends on bootloader
+  rollback support that isn't independently confirmed in this build.
+
+## Phase 19 — Dashboard
+
+**Implemented (gateway-only):**
+- `DashboardServer` (`lib/CarSentinelGateway/`) replaces `StatusPage` on the gateway
+  (node keeps `StatusPage` — its minimal read-only page is enough for a device with no
+  rich data to show and doesn't need a second hardware profile to support). Same
+  sensor-agnostic callback pattern as `StatusPage`/`IncidentCorrelator`: it knows
+  nothing about `DeviceRegistry`/`GpsManager`/`IncidentCorrelator` directly —
+  `gateway_main.cpp` supplies JSON-string-producing callbacks
+  (`buildStatusJson`/`buildDevicesJson`/`buildIncidentsJson`) and a stream provider.
+- Routes: `GET /` (embedded single-page dashboard — dark theme, no CDN/build step, must
+  work fully offline in a parked vehicle), `GET /api/status`, `GET /api/devices`,
+  `GET /api/incidents` (the "companion API" — usable on its own by a future phone app or
+  external tool, not just the bundled page), and `GET /stream?node=<id>` which proxies
+  a live MJPEG feed from the named camera node's own `StatusPage`-hosted `/stream`
+  endpoint (added to `StatusPage`/`CameraManager` alongside this phase) back through the
+  gateway, so the dashboard can show live camera video without exposing each node's IP
+  directly.
+- Dashboard page polls the three JSON endpoints every 3s and patches the DOM in place
+  (no full-page reload/flicker, unlike `StatusPage`'s old meta-refresh) — device cards
+  (firmware, uptime, heap, Wi-Fi, GPS, IMU, security mode, ESP-NOW), a live devices
+  table (Section 6 registry — auto-populated, zero-code), a live camera selector/feed,
+  and a recent-incidents table.
+- `IncidentCorrelator::listRecentJson(maxCount)` — new read model over the already
+  -persisted `/incidents/*.json` records (newest first), so the dashboard/API doesn't
+  need to re-implement IncidentCorrelator's on-disk format itself.
+- `DeviceRegistryEntry` gained a persisted `ip` field (populated from each node's
+  heartbeat) so the gateway can address a node directly for the camera stream proxy.
+
+**Not implemented:** authentication/access control on the dashboard or API (matches
+every other HTTP surface in this project so far — trusted local network only, not
+stated as anything more); historical charts/trends (only live + recent-incidents data);
+a JSON API for controlling the gateway (RENAME/ENABLE/etc. remain serial-only for now).
+
+**Build status: compiles clean, both environments** (verified directly — node
+unaffected since `DashboardServer` lives in the gateway-only `lib/CarSentinelGateway/`
+library and node's own `StatusPage` build only gained the small `/stream` addition).
+**Not yet bench-tested** — no physical device has served this page yet.
+
+**Known limitations / risks to verify on hardware:**
+- The camera stream proxy (`streamCameraFromNode`) is a raw byte relay over a second
+  `WiFiClient` connection to the node's IP — not yet confirmed under real network
+  conditions (packet loss, a node reconnecting mid-stream, multiple dashboard viewers
+  at once).
+- Dashboard JSON payload sizes (especially `/api/incidents`) haven't been checked
+  against the gateway's actual free heap under load with many devices/incidents.
+
 ## Next Step
 
-Flash the gateway and bench-test Phase 13 specifically: confirm both SSD1306 units
-actually render (not just "present" per the I2C probe — actual pixels), cycle through
-every page on both displays, confirm `DISPLAYPAGES`/`DISPLAYINTERVAL` reconfigure
-correctly and persist across a reboot, and check real-world text layout/readability.
-Once that's solid, continue with Phase 14 (OTA).
+Flash both the gateway and a node and bench-test Phases 13/14/19 together: confirm the
+OLED displays render, exercise `OTACHECK`/`OTAUPDATE` against a real manifest+image on
+the gateway (node OTA is out of scope per the limitation above), and open the
+dashboard at the gateway's IP to confirm the live device/incident data and camera
+stream proxy actually work end to end. Once that's solid, continue with Phase 15 (AI
+Framework).

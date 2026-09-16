@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <WiFiClient.h>
 
 // Minimal read-only status page served at the device's normal Wi-Fi IP once connected
 // (distinct from ProvisioningPortal, which only serves the temporary setup AP at
@@ -15,16 +16,20 @@ namespace CarSentinel {
 // body — caller-provided so node_main.cpp and gateway_main.cpp can each report their
 // own relevant state without this shared class knowing about either.
 typedef String (*StatusContentProvider)();
+typedef void (*StatusStreamProvider)(WiFiClient client, const String& nodeId);
 
 class StatusPage {
 public:
-    static void begin(const String& deviceTitle, StatusContentProvider provider);
+    static void begin(const String& deviceTitle, StatusContentProvider provider,
+                      StatusStreamProvider streamProvider = nullptr);
     static void loop();
     static bool isActive();
 
 private:
     static void handleRoot();
+    static void handleStream();
     static StatusContentProvider contentProvider;
+    static StatusStreamProvider streamProvider;
     static String title;
     static bool active;
 };

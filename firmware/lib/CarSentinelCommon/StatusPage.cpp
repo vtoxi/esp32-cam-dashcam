@@ -9,6 +9,7 @@ static const char* TAG = "StatusPage";
 static WebServer server(80);
 
 StatusContentProvider StatusPage::contentProvider = nullptr;
+StatusStreamProvider StatusPage::streamProvider = nullptr;
 String StatusPage::title;
 bool StatusPage::active = false;
 
@@ -18,7 +19,6 @@ void StatusPage::handleRoot() {
     String page =
         "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
         "<meta name=viewport content='width=device-width,initial-scale=1'>"
-        "<meta http-equiv=refresh content=5>"
         "<title>" + title + "</title>"
         "<style>"
         "body{font-family:monospace;background:#111;color:#eee;padding:16px;}"
@@ -36,10 +36,21 @@ void StatusPage::handleRoot() {
     server.send(200, "text/html; charset=utf-8", page);
 }
 
-void StatusPage::begin(const String& deviceTitle, StatusContentProvider provider) {
+void StatusPage::handleStream() {
+    if (streamProvider) {
+        streamProvider(server.client(), server.arg("node"));
+        return;
+    }
+    server.send(404, "text/plain", "Live stream unavailable");
+}
+
+void StatusPage::begin(const String& deviceTitle, StatusContentProvider provider,
+                       StatusStreamProvider streamP) {
     title = deviceTitle;
     contentProvider = provider;
+    streamProvider = streamP;
     server.on("/", HTTP_GET, handleRoot);
+    server.on("/stream", HTTP_GET, handleStream);
     server.begin();
     active = true;
     Logger::info(TAG, "Status page active at http://<device-ip>/");

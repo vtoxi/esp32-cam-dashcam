@@ -6,6 +6,7 @@
 #include "Logger.h"
 #include "Diagnostics.h"
 #include "DeviceConfig.h"
+#include "WiFiManager.h"
 
 #include <ArduinoJson.h>
 
@@ -49,6 +50,9 @@ void EspNowManager::sendHeartbeat() {
     doc["role"] = myRole;
     doc["uptimeMs"] = millis();
     doc["freeHeap"] = ESP.getFreeHeap();
+    if (WiFiManager::isConnected()) {
+        doc["ip"] = WiFiManager::localIP();
+    }
     // Carried so the gateway's DeviceRegistry can mirror a rename that happened locally
     // on this device (e.g. via BLE/AP provisioning) — RENAME's gateway-initiated path
     // already keeps the registry in sync, but until now a node-initiated rename had no

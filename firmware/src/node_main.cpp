@@ -32,6 +32,7 @@
 #include "PeerRegistry.h"
 #include "StatusPage.h"
 #include "SecurityModeConfig.h"
+#include "OtaManager.h"
 
 #include <ArduinoJson.h>
 
@@ -45,6 +46,38 @@ static unsigned long lastDhtRead = 0;
 static bool provisioningMode = false;
 static bool espNowActive = false;
 static TemperatureHumidityReading lastDhtReading;  // used as event environment context
+
+static void streamCamera(WiFiClient client, const String&) {
+    if (!CameraManager::isInitialized()) {
+        client.print("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\nCamera unavailable");
+        client.stop();
+        return;
+    }
+
+    client.print("HTTP/1.1 200 OK\r\n"
+                 "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
+                 "Cache-Control: no-cache\r\n"
+                 "Connection: close\r\n\r\n");
+
+    unsigned long startedMs = millis();
+    while (client.connected() && millis() - startedMs < 30000) {
+        Watchdog::feed();
+        camera_fb_t* fb = CameraManager::captureJpeg();
+        if (!fb) {
+            delay(50);
+            continue;
+        }
+
+        client.print("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ");
+        client.print(fb->len);
+        client.print("\r\n\r\n");
+        client.write(fb->buf, fb->len);
+        client.print("\r\n");
+        CameraManager::returnFrame(fb);
+        delay(120);
+    }
+    client.stop();
+}
 
 static void enterProvisioningMode() {
     provisioningMode = true;
@@ -346,6 +379,31 @@ static void handleSerialCommands() {
                      String(PeerRegistry::count()) + " gatewayDiscovered=" + String(haveGw));
         Logger::info(TAG, "securityMode=" + String(securityModeToString(SecurityModeConfig::getMode())));
         Diagnostics::logSnapshot(TAG);
+    } else if (line.startsWith("OTACHECK ")) {
+        String url = line.substring(9);
+        url.trim();
+        if (!WiFiManager::isConnected()) {
+            Logger::warn(TAG, "OTACHECK requires Wi-Fi; not connected");
+        } else {
+            OtaManifest m;
+            if (OtaManager::fetchManifest(url, m)) {
+                bool needed = OtaManager::isUpdateNeeded(m);
+                Logger::info(TAG, "Manifest version=" + m.version + " — " +
+                             (needed ? "update available" : "already up to date or incompatible"));
+            }
+        }
+    } else if (line.startsWith("OTAUPDATE ")) {
+        String url = line.substring(10);
+        url.trim();
+        if (!WiFiManager::isConnected()) {
+            Logger::warn(TAG, "OTAUPDATE requires Wi-Fi; not connected");
+        } else {
+            OtaManifest m;
+            if (OtaManager::fetchManifest(url, m) && OtaManager::performUpdate(m)) {
+                // performUpdate() restarts the device on success; reaching here means it failed.
+                Logger::error(TAG, "OTA update did not complete — device unchanged");
+            }
+        }
     }
 }
 
@@ -417,6 +475,11 @@ void setup() {
     Diagnostics::selfTest();
     Watchdog::begin(10);
 
+    // Section 37: "report healthy, mark update successful" — the half of that this
+    // project can honestly deliver (see OtaManager.h for what depends on the
+    // bootloader's own build configuration, not guaranteed here).
+    OtaManager::confirmHealthyBoot();
+
     SecurityModeConfig::begin();
 
     // Hardware capabilities before Wi-Fi/provisioning: local sensing/capture must not
@@ -454,12 +517,13 @@ void setup() {
     } else if (WiFiManager::isConnected()) {
         Logger::info(TAG, "NETWORK: connected, IP=" + WiFiManager::localIP() +
                      " ssid=" + NetworkConfig::get().ssid);
-        StatusPage::begin("CarSentinel Node " + cfg.nodeId, buildStatusHtml);
+        StatusPage::begin("CarSentinel Node " + cfg.nodeId, buildStatusHtml, streamCamera);
     } else {
         Logger::warn(TAG, "NETWORK: not connected (no IP) — Wi-Fi will keep retrying in the background");
     }
 
-    Logger::info(TAG, "Boot complete. Serial commands: STATUS, FACTORY_RESET, PROVISION, CAPTURE");
+    Logger::info(TAG, "Boot complete. Serial commands: STATUS, FACTORY_RESET, PROVISION, CAPTURE, "
+                 "OTACHECK <manifestUrl>, OTAUPDATE <manifestUrl>");
     Diagnostics::logSnapshot(TAG);
 }
 
@@ -482,7 +546,7 @@ void loop() {
         // Covers the case where Wi-Fi wasn't connected yet at boot (setup() only starts
         // the page immediately on a successful connect) but WiFiManager reconnects later.
         if (!StatusPage::isActive() && WiFiManager::isConnected()) {
-            StatusPage::begin("CarSentinel Node " + DeviceConfig::get().nodeId, buildStatusHtml);
+            StatusPage::begin("CarSentinel Node " + DeviceConfig::get().nodeId, buildStatusHtml, streamCamera);
         }
         StatusPage::loop();
     }

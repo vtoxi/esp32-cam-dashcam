@@ -4,7 +4,7 @@ A modular, configuration-driven, distributed ESP32 vehicle dashcam, security, te
 and black-box platform — built for a Peugeot 2008 prototype install, designed to run on
 any vehicle.
 
-> **Status: Phase 13 — OLED Displays**, plus an out-of-sequence minimal status web page.
+> **Status: Phase 19 — Dashboard**, with Phase 14 (OTA) also complete for the gateway.
 > Boot/identity/config (Phase 1), BLE+AP provisioning (Phase 2), capability-gated
 > hardware init (Phase 3), a working motion → confirm → capture → local-evidence
 > pipeline (Phase 4), node-to-gateway ESP-NOW communication (Phase 5), a zero-code
@@ -13,15 +13,18 @@ any vehicle.
 > with configurable, never-claims-a-crash impact-threshold detection (Phase 9),
 > `DISARMED`/`DRIVING`/`PARKED`/`SERVICE` security modes auto-detected from GPS/IMU
 > (Phase 10), real persisted incident records with full lifecycle and GPS/IMU/DHT
-> association (Phase 11), email alerts tied to the incident engine (Phase 12), and now
-> dual-SSD1306 OLED status pages — configurable per-display page sequences, not
-> hardcoded (Phase 13). **Compiles clean for both
-> targets, and both the node and gateway have now
-> been flashed and tested together on real hardware** — zero-code device discovery
-> (Phase 6) confirmed working end-to-end. Two more real bugs found from that test
-> (garbled em-dashes from a missing charset, and a node-initiated rename never reaching
-> the gateway's registry) are fixed. Multi-camera correlation (Phase 7), GPS fix
-> acquisition, IMU, and mode auto-transitions are still unverified. See
+> association (Phase 11), email alerts tied to the incident engine (Phase 12),
+> dual-SSD1306 OLED status pages (Phase 13), gateway self-update over HTTP(S) with
+> MD5-verified streaming writes (Phase 14 — node self-update is a documented hardware
+> limitation, see below), and a real gateway-hosted dashboard: live device/incident
+> data, a JSON companion API, and a live camera stream proxy (Phase 19). **Compiles
+> clean for both targets, and both the node and gateway have now been flashed and
+> tested together on real hardware** — zero-code device discovery (Phase 6) confirmed
+> working end-to-end. Multi-camera correlation (Phase 7), GPS fix acquisition, IMU, mode
+> auto-transitions, and every Phase 13/14/19 feature are still pending a physical bench
+> test. Classic ESP32 camera nodes cannot fit OTA's flash-write code within their fixed
+> IRAM budget alongside WiFi/BLE/camera — a real, measured link failure, not a guess —
+> so OTA is gateway-only this phase. See
 > [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for full phase status and
 > known limitations.
 

@@ -10,7 +10,7 @@
 // is the durable "this is a device I manage" record, gateway-only.
 namespace CarSentinel {
 
-constexpr int DEVICE_REGISTRY_SCHEMA_VERSION = 1;
+constexpr int DEVICE_REGISTRY_SCHEMA_VERSION = 2;
 
 struct DeviceRegistryEntry {
     // Persisted:
@@ -20,6 +20,7 @@ struct DeviceRegistryEntry {
     String mac;              // "AA:BB:CC:DD:EE:FF" — see MacAddress.h
     String hardwareProfile;
     String firmwareVersion;
+    String ip;               // last observed Wi-Fi IP (when connected)
     bool enabled = true;
 
     // Runtime-only (repopulated from live heartbeats, never written to disk — Section 13
@@ -43,7 +44,8 @@ public:
     // when the caller has no displayName to report (e.g. legacy/partial heartbeats).
     static DeviceRegistryEntry* upsertFromDiscovery(const String& nodeId, const uint8_t mac[6],
                                                       const String& role,
-                                                      const String& displayName = "");
+                                                      const String& displayName = "",
+                                                      const String& ip = "");
     static void updateHealth(const String& nodeId, uint32_t freeHeap, unsigned long uptimeMs);
 
     static DeviceRegistryEntry* find(const String& nodeId);

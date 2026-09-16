@@ -111,6 +111,13 @@ public:
 
     static void setNotificationHandler(IncidentNotifyHandler handler);
 
+    // Phase 19 dashboard read model: the persisted incident records already written by
+    // persist() (see /incidents/*.json), newest first, capped at maxCount. Returns a
+    // serialized JSON array string ready to hand straight to an HTTP response — this
+    // class already owns the on-disk record format, so it builds the array directly
+    // instead of making callers re-parse each file themselves.
+    static String listRecentJson(uint16_t maxCount);
+
 private:
     static IncidentRecord incidents[MAX_INCIDENTS];
     static uint32_t nextIncidentNumber;

@@ -42,6 +42,7 @@ bool DeviceRegistry::loadFromDisk() {
         e.mac = obj["mac"] | "";
         e.hardwareProfile = obj["hardwareProfile"] | "";
         e.firmwareVersion = obj["firmwareVersion"] | "";
+        e.ip = obj["ip"] | "";
         e.enabled = obj["enabled"] | true;
     }
     Logger::info(TAG, "Loaded " + String(deviceCount) + " device(s) from registry");
@@ -60,6 +61,7 @@ bool DeviceRegistry::save() {
         obj["mac"] = devices[i].mac;
         obj["hardwareProfile"] = devices[i].hardwareProfile;
         obj["firmwareVersion"] = devices[i].firmwareVersion;
+        obj["ip"] = devices[i].ip;
         obj["enabled"] = devices[i].enabled;
     }
 
@@ -89,7 +91,8 @@ DeviceRegistryEntry* DeviceRegistry::find(const String& nodeId) {
 }
 
 DeviceRegistryEntry* DeviceRegistry::upsertFromDiscovery(const String& nodeId, const uint8_t mac[6],
-                                                           const String& role, const String& displayName) {
+                                                           const String& role, const String& displayName,
+                                                           const String& ip) {
     String macStr = macToString(mac);
     DeviceRegistryEntry* existing = find(nodeId);
     if (existing) {
@@ -100,6 +103,9 @@ DeviceRegistryEntry* DeviceRegistry::upsertFromDiscovery(const String& nodeId, c
             existing->displayName = displayName;
             changed = true;
         }
+        // Older node firmware does not report an IP. Keep a previously learned value
+        // until a newer heartbeat reports a replacement instead of erasing it.
+        if (!ip.isEmpty() && existing->ip != ip) { existing->ip = ip; changed = true; }
         existing->lastSeenMs = millis();
         if (changed) save();
         return existing;
@@ -116,9 +122,10 @@ DeviceRegistryEntry* DeviceRegistry::upsertFromDiscovery(const String& nodeId, c
     e.displayName = displayName.isEmpty() ? nodeId : displayName;
     e.role = role;
     e.mac = macStr;
+    e.ip = ip;
     e.enabled = true;
     e.lastSeenMs = millis();
-    Logger::info(TAG, "New device discovered: " + nodeId + " role=" + role + " mac=" + macStr);
+    Logger::info(TAG, "New device discovered: " + nodeId + " role=" + role + " mac=" + macStr + " ip=" + ip);
     save();
     return &e;
 }

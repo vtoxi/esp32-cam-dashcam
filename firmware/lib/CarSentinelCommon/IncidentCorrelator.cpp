@@ -3,6 +3,8 @@
 
 #include <LittleFS.h>
 #include <ArduinoJson.h>
+#include <vector>
+#include <algorithm>
 
 namespace CarSentinel {
 
@@ -275,6 +277,59 @@ void IncidentCorrelator::closeIncident(IncidentRecord& inc) {
 
 void IncidentCorrelator::setNotificationHandler(IncidentNotifyHandler handler) {
     notifyHandler = handler;
+}
+
+String IncidentCorrelator::listRecentJson(uint16_t maxCount) {
+    File dir = LittleFS.open(INCIDENTS_DIR);
+    JsonDocument doc;
+    JsonArray arr = doc.to<JsonArray>();
+    if (!dir || !dir.isDirectory()) {
+        String out;
+        serializeJson(arr, out);
+        return out;
+    }
+
+    // Filenames are "INCIDENT-NNNNNN.json" — collect (number, name) pairs, then take the
+    // maxCount highest numbers (newest) without needing every file's contents in memory.
+    std::vector<std::pair<uint32_t, String>> files;
+    File entry = dir.openNextFile();
+    while (entry) {
+        String name = String(entry.name());
+        if (name.endsWith(".json")) {
+            int dashIdx = name.indexOf('-');
+            int dotIdx = name.indexOf(".json");
+            if (dashIdx >= 0 && dotIdx > dashIdx) {
+                uint32_t num = name.substring(dashIdx + 1, dotIdx).toInt();
+                files.push_back({num, name});
+            }
+        }
+        entry = dir.openNextFile();
+    }
+    std::sort(files.begin(), files.end(),
+              [](const std::pair<uint32_t, String>& a, const std::pair<uint32_t, String>& b) {
+                  return a.first > b.first;
+              });
+
+    uint16_t taken = 0;
+    for (const auto& f : files) {
+        if (taken >= maxCount) break;
+        String path = String(INCIDENTS_DIR) + "/" + f.second;
+        File jf = LittleFS.open(path, "r");
+        if (!jf) continue;
+        JsonDocument recordDoc;
+        DeserializationError err = deserializeJson(recordDoc, jf);
+        jf.close();
+        if (err) {
+            Logger::warn(TAG, "listRecentJson: failed to parse " + path + ": " + String(err.c_str()));
+            continue;
+        }
+        arr.add(recordDoc.as<JsonObject>());
+        taken++;
+    }
+
+    String out;
+    serializeJson(arr, out);
+    return out;
 }
 
 void IncidentCorrelator::loop() {

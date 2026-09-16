@@ -30,11 +30,12 @@
 #include "DeviceRegistry.h"
 #include "MacAddress.h"
 #include "IncidentCorrelator.h"
-#include "StatusPage.h"
+#include "DashboardServer.h"
 #include "SecurityModeConfig.h"
 #include "NotificationManager.h"
 #include "EmailConfig.h"
 #include "DisplayManager.h"
+#include "OtaManager.h"
 
 #include <ArduinoJson.h>
 #include <LittleFS.h>
@@ -57,8 +58,43 @@ static void onEspNowHeartbeat(const EspNowMessage& msg, const uint8_t mac[6]) {
     }
     String role = doc["role"] | "";
     String displayName = doc["displayName"] | "";
-    DeviceRegistry::upsertFromDiscovery(msg.senderNodeId, mac, role, displayName);
+    String ip = doc["ip"] | "";
+    DeviceRegistry::upsertFromDiscovery(msg.senderNodeId, mac, role, displayName, ip);
     DeviceRegistry::updateHealth(msg.senderNodeId, doc["freeHeap"] | 0, doc["uptimeMs"] | 0);
+}
+
+static void streamCameraFromNode(WiFiClient client, const String& nodeId) {
+    DeviceRegistryEntry* device = DeviceRegistry::find(nodeId);
+    if (!device || device->ip.isEmpty()) {
+        client.print("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\nCamera IP unavailable");
+        client.stop();
+        return;
+    }
+
+    WiFiClient upstream;
+    if (!upstream.connect(device->ip.c_str(), 80)) {
+        client.print("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\nCamera unreachable");
+        client.stop();
+        return;
+    }
+
+    upstream.print("GET /stream HTTP/1.1\r\nHost: " + device->ip +
+                   "\r\nConnection: close\r\n\r\n");
+
+    unsigned long startedMs = millis();
+    while (client.connected() && upstream.connected() && millis() - startedMs < 35000) {
+        Watchdog::feed();
+        while (upstream.available()) {
+            uint8_t buffer[1024];
+            size_t available = upstream.available();
+            size_t length = available > sizeof(buffer) ? sizeof(buffer) : available;
+            int read = upstream.readBytes(reinterpret_cast<char*>(buffer), length);
+            if (read > 0) client.write(buffer, read);
+        }
+        delay(1);
+    }
+    upstream.stop();
+    client.stop();
 }
 
 // Section 24: whatever GPS/IMU context the gateway currently has, gathered fresh at the
@@ -476,6 +512,7 @@ static void handleSerialCommands() {
             unsigned long agoMs = d->lastSeenMs == 0 ? 0 : millis() - d->lastSeenMs;
             Logger::info(TAG, "  " + d->nodeId + " \"" + d->displayName + "\" role=" + d->role +
                          " mac=" + d->mac + " enabled=" + String(d->enabled) +
+                         " ip=" + (d->ip.isEmpty() ? String("-") : d->ip) +
                          " lastSeenMsAgo=" + String(agoMs) +
                          " freeHeap=" + String(d->lastFreeHeap) +
                          " uptimeMs=" + String(d->lastUptimeMs));
@@ -655,58 +692,104 @@ static void handleSerialCommands() {
         cfg.pageIntervalMs = (unsigned long)msStr.toInt();
         DisplayManager::setConfig(cfg);
         Logger::info(TAG, "Display page interval set to " + String(cfg.pageIntervalMs) + "ms");
+    } else if (line.startsWith("OTACHECK ")) {
+        String url = line.substring(9);
+        url.trim();
+        if (!WiFiManager::isConnected()) {
+            Logger::warn(TAG, "OTACHECK requires Wi-Fi; not connected");
+        } else {
+            OtaManifest m;
+            if (OtaManager::fetchManifest(url, m)) {
+                bool needed = OtaManager::isUpdateNeeded(m);
+                Logger::info(TAG, "Manifest version=" + m.version + " — " +
+                             (needed ? "update available" : "already up to date or incompatible"));
+            }
+        }
+    } else if (line.startsWith("OTAUPDATE ")) {
+        String url = line.substring(10);
+        url.trim();
+        if (!WiFiManager::isConnected()) {
+            Logger::warn(TAG, "OTAUPDATE requires Wi-Fi; not connected");
+        } else {
+            OtaManifest m;
+            if (OtaManager::fetchManifest(url, m) && OtaManager::performUpdate(m)) {
+                // performUpdate() restarts the device on success; reaching here means it failed.
+                Logger::error(TAG, "OTA update did not complete — device unchanged");
+            }
+        }
     }
 }
 
-// Minimal read-only status page content (see StatusPage.h) — mirrors the STATUS/DEVICES
+// Phase 19 dashboard JSON providers (see DashboardServer.h) — mirrors the STATUS/DEVICES
 // serial commands' fields so they never drift into showing different things.
-static String buildStatusHtml() {
+static String buildStatusJson() {
     const DeviceConfigData& cfg = DeviceConfig::get();
     const NetworkConfigData& net = NetworkConfig::get();
     const CapabilitiesConfigData& caps = CapabilitiesConfig::get();
     DiagnosticsSnapshot diag = Diagnostics::snapshot();
 
-    String html = "<table>";
-    html += "<tr><td class=k>Node ID</td><td>" + cfg.nodeId + "</td></tr>";
-    html += "<tr><td class=k>Display Name</td><td>" + cfg.displayName + "</td></tr>";
-    html += "<tr><td class=k>Hardware Profile</td><td>" + cfg.hardwareProfile + "</td></tr>";
-    html += "<tr><td class=k>Firmware</td><td>" + cfg.firmwareVersion + "</td></tr>";
-    html += "<tr><td class=k>MAC</td><td>" + DeviceIdentity::macAddress() + "</td></tr>";
-    html += "<tr><td class=k>Wi-Fi</td><td>" + net.ssid + " (" + WiFiManager::localIP() + ")</td></tr>";
-    html += "<tr><td class=k>Uptime</td><td>" + String(diag.uptimeMs / 1000) + "s</td></tr>";
-    html += "<tr><td class=k>Free Heap</td><td>" + String(diag.freeHeap) + " bytes</td></tr>";
-    html += "</table>";
+    JsonDocument doc;
+    doc["nodeId"] = cfg.nodeId;
+    doc["displayName"] = cfg.displayName;
+    doc["hardwareProfile"] = cfg.hardwareProfile;
+    doc["firmwareVersion"] = cfg.firmwareVersion;
+    doc["mac"] = DeviceIdentity::macAddress();
+    doc["wifiSsid"] = net.ssid;
+    doc["wifiIp"] = WiFiManager::localIP();
+    doc["uptimeS"] = diag.uptimeMs / 1000;
+    doc["freeHeap"] = diag.freeHeap;
 
-    html += "<table>";
     if (caps.gps) {
-        html += "<tr><td class=k>GPS</td><td>" + GpsManager::toJson() + "</td></tr>";
+        GpsFix fix = GpsManager::getFix();
+        JsonObject gps = doc["gps"].to<JsonObject>();
+        gps["status"] = fix.status == GpsFixStatus::NO_FIX ? "NO_FIX" : "FIX";
+        gps["lat"] = fix.latitude;
+        gps["lon"] = fix.longitude;
+        gps["speedKmph"] = fix.speedKmph;
+        gps["satellites"] = fix.satellites;
     }
     if (caps.imu && ImuManager::isInitialized()) {
         ImuReading r = ImuManager::read();
-        html += "<tr><td class=k>IMU accel</td><td>" + String(r.accelMagnitudeG, 2) + " g</td></tr>";
-        html += "<tr><td class=k>IMU gyro</td><td>" + String(r.gyroMagnitudeDps, 1) + " deg/s</td></tr>";
+        JsonObject imu = doc["imu"].to<JsonObject>();
+        imu["accelG"] = r.accelMagnitudeG;
+        imu["gyroDps"] = r.gyroMagnitudeDps;
     }
-    html += "</table>";
 
-    html += "<table>";
-    html += "<tr><td class=k>Security Mode</td><td>" + String(securityModeToString(SecurityModeConfig::getMode())) +
-            (SecurityModeConfig::isManualOverride() ? " (manual)" : " (auto)") + "</td></tr>";
-    html += "<tr><td class=k>Email</td><td>" + String(EmailConfig::get().enabled ? "enabled" : "disabled") + "</td></tr>";
-    html += "<tr><td class=k>ESP-NOW</td><td>" + String(espNowActive ? "active" : "inactive") + "</td></tr>";
-    html += "<tr><td class=k>Peers seen</td><td>" + String(PeerRegistry::count()) + "</td></tr>";
-    html += "</table>";
+    doc["securityMode"] = String(securityModeToString(SecurityModeConfig::getMode())) +
+                           (SecurityModeConfig::isManualOverride() ? " (manual)" : " (auto)");
+    doc["emailEnabled"] = EmailConfig::get().enabled;
+    doc["espNowActive"] = espNowActive;
+    doc["peersSeen"] = PeerRegistry::count();
+    doc["deviceCount"] = DeviceRegistry::count();
 
-    html += "<p class=sub>Devices (Section 6 registry — auto-populated, zero-code):</p><table>";
-    html += "<tr><td class=k>Node</td><td class=k>Name</td><td class=k>Role</td><td class=k>Enabled</td><td class=k>Last seen</td></tr>";
+    String out;
+    serializeJson(doc, out);
+    return out;
+}
+
+// Section 6 registry — auto-populated, zero-code.
+static String buildDevicesJson() {
+    JsonDocument doc;
+    JsonArray arr = doc.to<JsonArray>();
     for (uint8_t i = 0; i < DeviceRegistry::count(); i++) {
         DeviceRegistryEntry* d = DeviceRegistry::get(i);
-        unsigned long agoS = d->lastSeenMs == 0 ? 0 : (millis() - d->lastSeenMs) / 1000;
-        html += "<tr><td>" + d->nodeId + "</td><td>" + d->displayName + "</td><td>" + d->role +
-                "</td><td>" + String(d->enabled ? "yes" : "no") + "</td><td>" + String(agoS) + "s ago</td></tr>";
+        JsonObject o = arr.add<JsonObject>();
+        o["nodeId"] = d->nodeId;
+        o["displayName"] = d->displayName;
+        o["role"] = d->role;
+        o["enabled"] = d->enabled;
+        o["ip"] = d->ip;
+        o["lastSeenAgoMs"] = d->lastSeenMs == 0 ? 0 : (millis() - d->lastSeenMs);
     }
-    html += "</table>";
+    String out;
+    serializeJson(arr, out);
+    return out;
+}
 
-    return html;
+// Delegates straight to IncidentCorrelator, which already owns the persisted record
+// format — this just picks how many to show on the dashboard.
+static String buildIncidentsJson() {
+    return IncidentCorrelator::listRecentJson(20);
 }
 
 void setup() {
@@ -733,6 +816,11 @@ void setup() {
 
     Diagnostics::selfTest();
     Watchdog::begin(10);
+
+    // Section 37: "report healthy, mark update successful" — the half of that this
+    // project can honestly deliver (see OtaManager.h for what depends on the
+    // bootloader's own build configuration, not guaranteed here).
+    OtaManager::confirmHealthyBoot();
 
     initHardwareCapabilities();
 
@@ -770,7 +858,8 @@ void setup() {
     } else if (WiFiManager::isConnected()) {
         Logger::info(TAG, "NETWORK: connected, IP=" + WiFiManager::localIP() +
                      " ssid=" + NetworkConfig::get().ssid);
-        StatusPage::begin("CarSentinel Gateway " + cfg.nodeId, buildStatusHtml);
+        DashboardServer::begin("CarSentinel Gateway " + cfg.nodeId, buildStatusJson, buildDevicesJson,
+                       buildIncidentsJson, streamCameraFromNode);
     } else {
         Logger::warn(TAG, "NETWORK: not connected (no IP) — Wi-Fi will keep retrying in the background");
     }
@@ -781,7 +870,7 @@ void setup() {
                  "MODE, MODE <DISARMED|DRIVING|PARKED|SERVICE>, AUTOMODE, INCIDENTS, "
                  "EMAILCONFIG <host> <port> <user> <pass> <sender> <recipient>, "
                  "EMAILENABLE, EMAILDISABLE, TESTEMAIL, DISPLAYPAGES <0|1> <PAGE,...>, "
-                 "DISPLAYINTERVAL <ms>");
+                 "DISPLAYINTERVAL <ms>, OTACHECK <manifestUrl>, OTAUPDATE <manifestUrl>");
     Diagnostics::logSnapshot(TAG);
 }
 
@@ -804,10 +893,11 @@ void loop() {
         }
         // Covers the case where Wi-Fi wasn't connected yet at boot (setup() only starts
         // the page immediately on a successful connect) but WiFiManager reconnects later.
-        if (!StatusPage::isActive() && WiFiManager::isConnected()) {
-            StatusPage::begin("CarSentinel Gateway " + DeviceConfig::get().nodeId, buildStatusHtml);
+        if (!DashboardServer::isActive() && WiFiManager::isConnected()) {
+            DashboardServer::begin("CarSentinel Gateway " + DeviceConfig::get().nodeId, buildStatusJson,
+                                    buildDevicesJson, buildIncidentsJson, streamCameraFromNode);
         }
-        StatusPage::loop();
+        DashboardServer::loop();
     }
 
     unsigned long now = millis();

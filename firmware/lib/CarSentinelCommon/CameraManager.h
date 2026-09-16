@@ -3,9 +3,8 @@
 #include <Arduino.h>
 #include <esp_camera.h>
 
-// esp32-camera wrapper for the AI-Thinker ESP32-CAM (OV2640). Snapshot/burst capture
-// only (Section 14 — continuous video is explicitly not assumed reliable on this
-// hardware; build snapshot/event-clip evidence first).
+// esp32-camera wrapper for the AI-Thinker ESP32-CAM (OV2640). It supports both
+// snapshot capture and the short-lived MJPEG stream served by node_main.cpp.
 namespace CarSentinel {
 
 class CameraManager {

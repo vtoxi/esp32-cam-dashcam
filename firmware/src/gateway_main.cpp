@@ -34,6 +34,7 @@
 #include "SecurityModeConfig.h"
 #include "NotificationManager.h"
 #include "EmailConfig.h"
+#include "DisplayManager.h"
 
 #include <ArduinoJson.h>
 #include <LittleFS.h>
@@ -283,6 +284,80 @@ static void applyModeChange(SecurityMode mode, bool manual) {
     broadcastModeToAllDevices(mode);
 }
 
+// Section 25/26: draws one OLED page's content. Deliberately terse (128x64 at text
+// size 1 fits ~8 lines of ~21 chars) — this mirrors buildStatusHtml()/the STATUS
+// command's fields at a glance, not a full replica of either.
+static void renderDisplayPage(uint8_t displayIndex, DisplayPageId page, Adafruit_SSD1306& d) {
+    const DeviceConfigData& cfg = DeviceConfig::get();
+    switch (page) {
+        case DisplayPageId::HOME: {
+            d.println("CarSentinel");
+            d.println(cfg.nodeId);
+            d.print("Mode: ");
+            d.println(securityModeToString(SecurityModeConfig::getMode()));
+            d.print("ESP-NOW: ");
+            d.println(espNowActive ? "active" : "off");
+            break;
+        }
+        case DisplayPageId::NETWORK: {
+            d.println("NETWORK");
+            d.println(WiFiManager::isConnected() ? NetworkConfig::get().ssid : "not connected");
+            d.println(WiFiManager::isConnected() ? WiFiManager::localIP() : "-");
+            break;
+        }
+        case DisplayPageId::GPS_PAGE: {
+            d.println("GPS");
+            GpsFix fix = GpsManager::getFix();
+            if (fix.status == GpsFixStatus::FIX) {
+                d.print("Sat: "); d.println(fix.satellites);
+                d.print("Spd: "); d.print(fix.speedKmph, 1); d.println(" km/h");
+                d.println(String(fix.latitude, 5));
+                d.println(String(fix.longitude, 5));
+            } else {
+                d.println("NO FIX");
+            }
+            break;
+        }
+        case DisplayPageId::IMU_PAGE: {
+            d.println("IMU");
+            if (ImuManager::isInitialized()) {
+                ImuReading r = ImuManager::read();
+                d.print("Accel: "); d.print(r.accelMagnitudeG, 2); d.println("g");
+                d.print("Gyro: "); d.print(r.gyroMagnitudeDps, 1); d.println(" dps");
+            } else {
+                d.println("not present");
+            }
+            break;
+        }
+        case DisplayPageId::SECURITY: {
+            d.println("SECURITY");
+            d.print("Mode: "); d.println(securityModeToString(SecurityModeConfig::getMode()));
+            d.print("Devices: "); d.println(DeviceRegistry::count());
+            d.print("Email: "); d.println(EmailConfig::get().enabled ? "on" : "off");
+            break;
+        }
+        case DisplayPageId::DEVICES: {
+            d.println("DEVICES");
+            uint8_t shown = 0;
+            for (uint8_t i = 0; i < DeviceRegistry::count() && shown < 5; i++) {
+                DeviceRegistryEntry* dv = DeviceRegistry::get(i);
+                d.println(dv->displayName + (dv->enabled ? "" : " (off)"));
+                shown++;
+            }
+            if (DeviceRegistry::count() == 0) d.println("(none yet)");
+            break;
+        }
+        default: {  // SYSTEM
+            DiagnosticsSnapshot diag = Diagnostics::snapshot();
+            d.println("SYSTEM");
+            d.println(cfg.firmwareVersion);
+            d.print("Up: "); d.print(diag.uptimeMs / 1000); d.println("s");
+            d.print("Heap: "); d.println(diag.freeHeap);
+            break;
+        }
+    }
+}
+
 static void initHardwareCapabilities() {
     DeviceConfigData dev = DeviceConfig::get();
     if (dev.hardwareProfile == "UNKNOWN") {
@@ -314,13 +389,18 @@ static void initHardwareCapabilities() {
             Logger::info(TAG, "Skipping ImuManager init — device not present");
         }
     }
+    bool display0Present = false, display1Present = false;
     if (caps.display && caps.displayCount >= 1) {
-        bool present = I2CBusManager::isPresent(0, SSD1306_I2C_ADDR);
-        Logger::info(TAG, String("SSD1306 #1 (0x3C) on bus 0: ") + (present ? "PRESENT" : "NOT FOUND"));
+        display0Present = I2CBusManager::isPresent(0, SSD1306_I2C_ADDR);
+        Logger::info(TAG, String("SSD1306 #1 (0x3C) on bus 0: ") + (display0Present ? "PRESENT" : "NOT FOUND"));
     }
     if (caps.display && caps.displayCount >= 2) {
-        bool present = I2CBusManager::isPresent(1, SSD1306_I2C_ADDR);
-        Logger::info(TAG, String("SSD1306 #2 (0x3C) on bus 1: ") + (present ? "PRESENT" : "NOT FOUND"));
+        display1Present = I2CBusManager::isPresent(1, SSD1306_I2C_ADDR);
+        Logger::info(TAG, String("SSD1306 #2 (0x3C) on bus 1: ") + (display1Present ? "PRESENT" : "NOT FOUND"));
+    }
+    if (display0Present || display1Present) {
+        DisplayManager::setRenderCallback(renderDisplayPage);
+        DisplayManager::begin(display0Present, display1Present);
     }
 
     if (caps.gps) {
@@ -377,6 +457,8 @@ static void handleSerialCommands() {
                      " manualOverride=" + String(SecurityModeConfig::isManualOverride()));
         Logger::info(TAG, "email.enabled=" + String(EmailConfig::get().enabled) +
                      " email.host=" + EmailConfig::get().smtpHost);
+        Logger::info(TAG, "display0.present=" + String(DisplayManager::isPresent(0)) +
+                     " display1.present=" + String(DisplayManager::isPresent(1)));
         Logger::info(TAG, "espnow.active=" + String(espNowActive) + " peers=" + String(PeerRegistry::count()));
         for (uint8_t i = 0; i < PeerRegistry::count(); i++) {
             PeerInfo* p = PeerRegistry::get(i);
@@ -533,6 +615,46 @@ static void handleSerialCommands() {
         Logger::info(TAG, "Sending test email...");
         bool sent = NotificationManager::sendTest();
         Logger::info(TAG, sent ? "Test email sent" : "Test email failed — check EMAILCONFIG and serial log above");
+    } else if (line.startsWith("DISPLAYPAGES ")) {
+        // Section 25: "configuration should determine display content, do not hardcode
+        // a display's purpose." <index> is 0 or 1; <pages> is a comma-separated list
+        // like HOME,SECURITY,GPS.
+        String indexStr, pagesStr;
+        splitArgs(line, indexStr, pagesStr);
+        int idx = indexStr.toInt();
+        if ((indexStr != "0" && indexStr != "1") || pagesStr.isEmpty()) {
+            Logger::warn(TAG, "Usage: DISPLAYPAGES <0|1> <PAGE,PAGE,...>  (pages: HOME, "
+                         "NETWORK, GPS, IMU, SECURITY, DEVICES, SYSTEM)");
+        } else {
+            DisplayConfigData cfg = DisplayManager::getConfig();
+            uint8_t count = 0;
+            DisplayPageId parsed[DisplayConfigData::MAX_PAGES];
+            String remaining = pagesStr;
+            while (remaining.length() > 0 && count < DisplayConfigData::MAX_PAGES) {
+                int comma = remaining.indexOf(',');
+                String token = comma < 0 ? remaining : remaining.substring(0, comma);
+                token.trim();
+                if (token.length() > 0) parsed[count++] = displayPageIdFromString(token);
+                if (comma < 0) break;
+                remaining = remaining.substring(comma + 1);
+            }
+            if (idx == 0) {
+                cfg.display0PageCount = count;
+                for (uint8_t i = 0; i < count; i++) cfg.display0Pages[i] = parsed[i];
+            } else {
+                cfg.display1PageCount = count;
+                for (uint8_t i = 0; i < count; i++) cfg.display1Pages[i] = parsed[i];
+            }
+            DisplayManager::setConfig(cfg);
+            Logger::info(TAG, "Display " + String(idx) + " pages updated (" + String(count) + " page(s))");
+        }
+    } else if (line.startsWith("DISPLAYINTERVAL ")) {
+        String msStr, unused;
+        splitArgs(line, msStr, unused);
+        DisplayConfigData cfg = DisplayManager::getConfig();
+        cfg.pageIntervalMs = (unsigned long)msStr.toInt();
+        DisplayManager::setConfig(cfg);
+        Logger::info(TAG, "Display page interval set to " + String(cfg.pageIntervalMs) + "ms");
     }
 }
 
@@ -658,7 +780,8 @@ void setup() {
                  "SETROLE <id> <role>, RESTART <id>, RESET <id>, IMUTHRESHOLDS <accelG> <gyroDps>, "
                  "MODE, MODE <DISARMED|DRIVING|PARKED|SERVICE>, AUTOMODE, INCIDENTS, "
                  "EMAILCONFIG <host> <port> <user> <pass> <sender> <recipient>, "
-                 "EMAILENABLE, EMAILDISABLE, TESTEMAIL");
+                 "EMAILENABLE, EMAILDISABLE, TESTEMAIL, DISPLAYPAGES <0|1> <PAGE,...>, "
+                 "DISPLAYINTERVAL <ms>");
     Diagnostics::logSnapshot(TAG);
 }
 
@@ -742,6 +865,10 @@ void loop() {
         } else if (stationaryStreak >= MODE_SWITCH_STREAK && SecurityModeConfig::getMode() != SecurityMode::PARKED) {
             applyModeChange(SecurityMode::PARKED, false);
         }
+    }
+
+    if (caps.display) {
+        DisplayManager::loop();
     }
 
     if (now - lastDiagnosticsLog >= DIAGNOSTICS_INTERVAL_MS) {

@@ -4,8 +4,8 @@ A modular, configuration-driven, distributed ESP32 vehicle dashcam, security, te
 and black-box platform — built for a Peugeot 2008 prototype install, designed to run on
 any vehicle.
 
-> **Status: Phase 12 — Email Notification**, plus an out-of-sequence minimal status web
-> page. Boot/identity/config (Phase 1), BLE+AP provisioning (Phase 2), capability-gated
+> **Status: Phase 13 — OLED Displays**, plus an out-of-sequence minimal status web page.
+> Boot/identity/config (Phase 1), BLE+AP provisioning (Phase 2), capability-gated
 > hardware init (Phase 3), a working motion → confirm → capture → local-evidence
 > pipeline (Phase 4), node-to-gateway ESP-NOW communication (Phase 5), a zero-code
 > auto-populating gateway device registry with remote commands (Phase 6), cross-camera
@@ -13,9 +13,9 @@ any vehicle.
 > with configurable, never-claims-a-crash impact-threshold detection (Phase 9),
 > `DISARMED`/`DRIVING`/`PARKED`/`SERVICE` security modes auto-detected from GPS/IMU
 > (Phase 10), real persisted incident records with full lifecycle and GPS/IMU/DHT
-> association (Phase 11), a read-only status page at each device's IP, and now email
-> alerts — a minimal SMTP client, persisted credentials, cooldown-gated dispatch tied to
-> the incident engine's NOTIFICATION state (Phase 12). **Compiles clean for both
+> association (Phase 11), email alerts tied to the incident engine (Phase 12), and now
+> dual-SSD1306 OLED status pages — configurable per-display page sequences, not
+> hardcoded (Phase 13). **Compiles clean for both
 > targets, and both the node and gateway have now
 > been flashed and tested together on real hardware** — zero-code device discovery
 > (Phase 6) confirmed working end-to-end. Two more real bugs found from that test

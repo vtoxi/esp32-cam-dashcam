@@ -21,7 +21,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 10 | Driving / Parking Modes | Confirmed `PARKED (auto)` reporting correctly on real hardware; mode transitions not yet tested |
 | 11 | Incident & Evidence Engine | Compiles clean (both envs) — pending physical bench test |
 | 12 | Email Notification | Compiles clean (both envs) — pending real SMTP bench test |
-| 13 | OLED Displays | Not started |
+| 13 | OLED Displays | Compiles clean (both envs) — pending physical OLED bench test |
 | 14 | OTA | Not started |
 | 15 | AI Framework | Not started |
 | 16 | AI Security Assistance | Not started |
@@ -923,4 +923,69 @@ Flash the gateway and bench-test Phases 11–12 together: trigger an incident, c
 `/incidents/*.json` file appears with populated association data, configure real SMTP
 credentials via `EMAILCONFIG`, run `TESTEMAIL`, and confirm a real email arrives —
 watching specifically for whether the blocking SMTP call causes any watchdog issue on
-real hardware. Once that's solid, continue with Phase 13 (OLED Displays).
+real hardware.
+
+## Phase 13 — OLED Displays
+
+**Implemented:**
+- `DisplayManager` (gateway-only) — drives up to two SSD1306 OLEDs via
+  `adafruit/Adafruit SSD1306` + `Adafruit GFX Library` (well-established, stable public
+  APIs unchanged for years; not verified against this toolchain's installed headers the
+  way core/ESP-IDF APIs have been in every prior phase, since these are external
+  libraries not present in the local install to grep — a deliberate, lower-risk
+  exception to that discipline given how mature and unchanging this specific API is).
+  Display 2 lives on the second I2C bus (`Wire1`), guarded by `#if SOC_I2C_NUM > 1`
+  exactly like `I2CBusManager` already does, since `Wire1` doesn't exist on the node's
+  classic ESP32 target and this file compiles into both environments.
+- Never touches hardware that wasn't already confirmed present by Phase 3/9's I2C
+  presence probe (Section 2.2) — `DisplayManager::begin(present0, present1)` takes
+  those results directly, doesn't re-probe.
+- **Configurable page assignment, not hardcoded** (Section 25's explicit requirement):
+  each display cycles through a persisted, ordered list of pages
+  (`/config/display_config.json`), with sensible compiled-in defaults (display 0:
+  HOME/SECURITY/GPS, display 1: NETWORK/DEVICES/SYSTEM) that a `DISPLAYPAGES <0|1>
+  <PAGE,PAGE,...>` serial command can override per Section 48's "no raw JSON to normal
+  users" spirit — an admin command, not a hand-edited config file. `DISPLAYINTERVAL
+  <ms>` tunes the page-cycle timing.
+- Seven pages implemented (Section 26): HOME, NETWORK, GPS, IMU, SECURITY, DEVICES,
+  SYSTEM — each a terse ~4–5 line summary (128×64 at text size 1 fits ~8 lines) mirroring
+  the same fields `STATUS`/the status page already report, kept as one source of truth
+  per field rather than a third place these could drift apart.
+- Sensor-agnostic by design, same pattern as `IncidentCorrelator`/`StatusPage`:
+  `DisplayManager` owns the Adafruit_SSD1306 objects and the page-cycling timer only;
+  `gateway_main.cpp`'s `renderDisplayPage()` callback does the actual drawing using
+  whatever managers it already has (`GpsManager`, `ImuManager`, `DeviceRegistry`,
+  `SecurityModeConfig`, etc.) — `DisplayManager` itself has no dependency on any of them.
+
+**Not implemented (by design):** any interactive input (no buttons/encoder wired —
+these are read-only status displays); animations/graphics beyond text (Adafruit GFX
+supports them, nothing in Section 25/26 asks for them); a page reachable from BLE/AP
+provisioning's initial setup (display config is gateway-serial-only for now, matching
+where every other runtime config command already lives).
+
+**Build status: compiles clean, both environments, first attempt** (verified directly —
+node RAM 19.2%/Flash 42.7%, unchanged since node never touches `DisplayManager`; the two
+new external libraries resolved without a compile-fix pass despite not being pre-verified
+against local headers). **Not yet bench-tested** — no physical SSD1306 has rendered
+anything from this code yet.
+
+**Known limitations / risks to verify on hardware:**
+- `Adafruit_SSD1306::begin(..., periphBegin=false)` assumes `I2CBusManager` already
+  called `Wire.begin()`/`Wire1.begin()` with the confirmed pins before `DisplayManager`
+  starts — order-dependent, and `gateway_main.cpp`'s `initHardwareCapabilities()` does
+  call them in that order, but this is a real coupling worth remembering if that
+  function is ever refactored.
+- Both physical SSD1306 units are confirmed at the same address (`0x3C`) with no
+  jumper — this phase's dual-bus approach depends entirely on that being resolved
+  correctly at the `I2CBusManager`/pin level (Phase 9), not re-verified here.
+- Page content generation (`renderDisplayPage()`) has never been visually checked for
+  layout/readability on an actual 128×64 screen — line lengths were estimated from the
+  font's nominal character width, not measured against a real render.
+
+## Next Step
+
+Flash the gateway and bench-test Phase 13 specifically: confirm both SSD1306 units
+actually render (not just "present" per the I2C probe — actual pixels), cycle through
+every page on both displays, confirm `DISPLAYPAGES`/`DISPLAYINTERVAL` reconfigure
+correctly and persist across a reboot, and check real-world text layout/readability.
+Once that's solid, continue with Phase 14 (OTA).

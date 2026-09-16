@@ -1199,15 +1199,83 @@ the bench first, and that a real (not simulated) ignition-sense circuit is built
 tested before it ever touches the vehicle's actual wiring. This is a checklist, not a
 completed install: nothing in it has been executed against the real Peugeot 2008 yet.
 
-## Next Step
+## Next Step (superseded for networking — see the Architecture Update entry below)
 
 All 20 phases now have either working firmware or (Phase 20) a documented plan. The
 project's own "one phase at a time, stop for review" discipline (Section 64/76) has
 been running ahead of physical bench verification for a while now — Phases 4/5/6/8/10
 have some real-hardware confirmation, but 7/9/11/12/13/14/15/16/17/18/19 are all still
-"compiles clean, not yet bench-tested." **The actual next step is hardware, not more
-code:** flash both environments, work through each phase's bench-test checklist in
-order, fix whatever real bugs that surfaces (the established pattern all session —
-watchdog timing, camera reinit, mojibake, rename-sync, the OTA IRAM overflow — were all
-found this way, not by writing more firmware blind), and only then move toward Phase 20's
-actual vehicle install.
+"compiles clean, not yet bench-tested." The actual next step was going to be hardware
+bench verification — but a networking architecture change (below) landed first and
+needs to be implemented before some of that bench testing (especially anything
+touching Phase 2/5/6) is worth doing against the current code.
+
+## Architecture Update — Hybrid ESP-NOW/Wi-Fi Networking
+
+**Planning-only update — no firmware was changed as part of this entry.** Full design:
+[docs/NETWORK.md](NETWORK.md), [docs/PROVISIONING.md](PROVISIONING.md),
+[docs/SECURITY.md](SECURITY.md), [docs/OTA.md](OTA.md), [docs/TESTING.md](TESTING.md).
+`docs/ARCHITECTURE.md` and `README.md` were also updated for consistency.
+
+**What changed:** the project's networking model is now explicitly ESP-NOW-primary /
+Wi-Fi-fallback / standalone-mandatory, with Wi-Fi credentials optional per device
+(requested only if Wi-Fi fallback is enabled), rather than the implicit
+Wi-Fi-first/only model the docs previously read as. This wasn't a contradiction
+introduced now — it's the same "node independence" principle stated since Phase 0
+(`docs/ARCHITECTURE.md`), made explicit and load-bearing rather than aspirational, and
+made consistent across every doc that touches networking (some of which, notably
+`README.md`'s provisioning section, previously read as if Wi-Fi were required for every
+device).
+
+**Concrete gap vs. the current implementation** (full detail in `docs/NETWORK.md`
+Section 9 and `docs/PROVISIONING.md` Section 4 — summarized here for the plan record):
+
+1. `node_main.cpp`'s `setup()` currently gates ESP-NOW behind Wi-Fi/provisioning
+   state — a node with no saved Wi-Fi credentials enters `enterProvisioningMode()`
+   and **does not start ESP-NOW at all** until provisioning ends. Target: ESP-NOW
+   starts unconditionally and early; Wi-Fi/provisioning becomes independent of it.
+2. No `TransportManager` or `WiFiTransport` exist — application code calls
+   `EspNowManager::sendMessage()` directly everywhere, and transport state is tracked
+   via separate booleans rather than a real state machine. The existing `Transport`/
+   `EspNowTransport` interface (Phase 5) is a low-level, MAC-addressed radio
+   abstraction and stays as-is; the new `TransportManager` is a higher-level layer
+   above it, addressed by logical device identity.
+3. No persisted offline-event queue — already an acknowledged gap in `EspNowManager.h`
+   itself ("the persistent offline queue is Section 28 / Phase 28, out of scope
+   here"). Standalone local capture/storage already works; sync-on-reconnect doesn't.
+4. No formal gateway discovery/pairing handshake or gateway-identity validation —
+   today's zero-code auto-discovery (Phase 6) is a real, worth-keeping convenience for
+   the common case, but has no cryptographic proof that a device claiming to be the
+   gateway actually is the paired one.
+5. `ProvisioningPortal`'s form always shows a Wi-Fi SSID/password field with no way to
+   skip it for an ESP-NOW-only device, and `NetworkConfig` has no explicit "Wi-Fi
+   fallback enabled" toggle distinct from "credentials happen to be saved."
+
+**Required new interfaces/classes** (design recorded in `docs/NETWORK.md` Section 5,
+not yet implemented): `TransportManager` (owns the `DISCONNECTED` /
+`ESPNOW_CONNECTING` / `ESPNOW_CONNECTED` / `WIFI_FALLBACK_CONNECTING` /
+`WIFI_CONNECTED` / `STANDALONE` state machine, exposes `sendEvent()`/`sendCommand()`/
+`sendTelemetry()`/`sendStatus()`/`requestConfiguration()`), `WiFiTransport`
+(gateway-reachable-over-IP, distinct from `WiFiManager`'s existing raw STA
+connect/reconnect job), an offline event queue, and a real pairing/gateway-validation
+step (likely tied into `docs/PROVISIONING.md`'s flow). `NetworkConfig`'s schema needs
+a `network.primaryTransport`/`fallbackTransport`/per-transport-config section
+(conceptual shape in `docs/NETWORK.md` Section 6 — not a final schema).
+
+**Explicitly not done as part of this update:** no code was written or changed; no new
+phase number was assigned (whether this becomes "Phase 21" or a rework folded into
+Phases 2/5/6 is an open decision for whoever scopes the implementation); the multi-WiFi
+list feature and Settings page built earlier in this session (`NetworkConfig::saved[]`,
+`connectBestKnown()`, the gateway dashboard's `/settings` page) are unaffected and
+remain in place — they solve "remember multiple Wi-Fi networks for the fallback path,"
+which is still exactly what's needed under this architecture, just no longer the
+*first* thing a node tries.
+
+## Next Step
+
+Before resuming the Phase 7/9/11–19 hardware bench-test queue: decide how the gap
+above gets implemented (new phase vs. folding into a Phase 2/5/6 rework), since testing
+Phase 2 (provisioning)/5 (ESP-NOW)/6 (device management) against the current code would
+mean bench-verifying behavior this update is about to change. Everything else
+(GPS/IMU/incidents/email/displays/AI framework/power mode/ignition sense/dashboard) is
+independent of this networking change and can still be bench-tested in the meantime.

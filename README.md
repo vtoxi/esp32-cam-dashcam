@@ -64,11 +64,20 @@ and local storage do not depend on the gateway, Wi-Fi, or Internet being availab
 
 ```text
 Gateway (ESP32-S3)
-  ↓ ESP-NOW
+  ↓ ESP-NOW (primary) / Wi-Fi fallback (node → gateway, not the Internet)
 Camera / Sensor Nodes (ESP32-CAM, generic firmware)
 ```
 
-Full diagrams and design rationale: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+A node's normal operation requires no Wi-Fi credentials, no router, and no Internet —
+ESP-NOW is the default transport, Wi-Fi is a fallback, and full standalone local
+operation (motion/capture/evidence/telemetry) is mandatory when neither is reachable.
+**This is the target architecture, not yet fully matched by the current
+implementation** — see [docs/NETWORK.md](docs/NETWORK.md) for the design and exactly
+where today's code differs from it, plus
+[docs/PROVISIONING.md](docs/PROVISIONING.md),
+[docs/SECURITY.md](docs/SECURITY.md), [docs/OTA.md](docs/OTA.md), and
+[docs/TESTING.md](docs/TESTING.md). Full diagrams and design rationale:
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Hardware
 
@@ -102,18 +111,21 @@ Arduino core for ESP32, built via PlatformIO (two environments: `gateway`, `node
 7. pio device monitor             # watch boot logs; try STATUS, FACTORY_RESET, PROVISION
 ```
 
-On first boot (no saved Wi-Fi credentials), a device opens **both** BLE and a temporary
-Wi-Fi AP (`CarSentinel-Setup-<id>`) for provisioning. Connect to the AP and browse to
-`192.168.4.1`, or use a BLE GATT client, to set the Wi-Fi SSID/password, hostname,
-display name, and role; the device reboots into normal operation once submitted. Send
-`PROVISION` over serial at any time to clear saved Wi-Fi credentials and re-open
-provisioning without a full factory reset.
+On first boot (no saved Wi-Fi credentials), a device currently opens **both** BLE and a
+temporary Wi-Fi AP (`CarSentinel-Setup-<id>`) for provisioning — connect to the AP and
+browse to `192.168.4.1`, or use a BLE GATT client, to set identity (display name, role)
+and, if Wi-Fi fallback is wanted, the Wi-Fi SSID/password/hostname; the device reboots
+into normal operation once submitted. Send `PROVISION` over serial at any time to clear
+saved Wi-Fi credentials and re-open provisioning without a full factory reset.
+**Today, entering this Wi-Fi/BLE provisioning flow is also what currently gates when
+ESP-NOW starts on a node — a known architecture gap being closed per
+[docs/NETWORK.md](docs/NETWORK.md), not the target behavior.**
 
-Once a device successfully joins your Wi-Fi network, browse to its IP address (shown in
-the boot log as `NETWORK: connected, IP=...`, or via the `STATUS` serial command) for a
-read-only, auto-refreshing status page — identity, sensors, ESP-NOW state, and (on the
-gateway) the live device registry. This is a minimal view-only page, not the full
-configuration dashboard (that's a later phase).
+Once a device successfully joins your Wi-Fi network (fallback transport, or the
+gateway's own Internet-facing connection — see [docs/NETWORK.md](docs/NETWORK.md)),
+browse to its IP address (shown in the boot log as `NETWORK: connected, IP=...`, or via
+the `STATUS` serial command) for a read-only status page — identity, sensors, ESP-NOW
+state, and (on the gateway) the live device registry, dashboard, and settings.
 
 ## Adding / Removing / Replacing a Camera
 

@@ -1,11 +1,21 @@
-# CarSentinel — Architecture (Phase 0)
+# CarSentinel — Architecture (Phase 0, networking model updated post-Phase 20)
 
 ## Overview
 
 CarSentinel is a distributed ESP32 vehicle dashcam/security/telemetry platform. One
 ESP32-S3 **Gateway** coordinates multiple ESP32-CAM **Camera Nodes** and vehicle-level
-sensors (GPS, IMU, OLED displays) over ESP-NOW. Every node must remain independently
-functional if the gateway, Wi-Fi, or Internet is unavailable.
+sensors (GPS, IMU, OLED displays) over a **hybrid transport**: ESP-NOW is the primary,
+preferred transport between every node and the gateway; Wi-Fi is a fallback used only
+when ESP-NOW can't reach the gateway; standalone local operation (no transport
+reachable at all) is mandatory, not a degraded edge case. **A node's normal operation
+requires no Wi-Fi credentials, no router, and no Internet access.** See
+`docs/NETWORK.md` for the full transport architecture, state machine, and — important —
+exactly where the current implementation doesn't yet match this model.
+
+Every node must remain independently functional if the gateway, Wi-Fi, or Internet is
+unavailable — this was already the stated principle in Phase 0 and is now the load
+-bearing requirement the networking architecture is built around, not just an
+aspiration.
 
 ```text
                          INTERNET (optional)
@@ -21,7 +31,9 @@ functional if the gateway, Wi-Fi, or Internet is unavailable.
                  │ GPS + IMU + OLEDs   │
                  └──────────┬──────────┘
                             │
-                         ESP-NOW
+              ESP-NOW (primary) / Wi-Fi (fallback,
+              node → gateway's own IP — never required
+              to reach the Internet)
           ┌─────────────────┼─────────────────┐
      ┌────▼────┐       ┌────▼────┐       ┌────▼────┐
      │ FRONT   │       │ REAR    │       │ LEFT/   │
@@ -30,6 +42,12 @@ functional if the gateway, Wi-Fi, or Internet is unavailable.
      │  DHT,SD)│       │  DHT,SD)│       │ (...)   │
      └─────────┘       └─────────┘       └─────────┘
 ```
+
+See `docs/NETWORK.md` for the transport state machine (ESP-NOW ↔ Wi-Fi fallback ↔
+standalone), `docs/PROVISIONING.md` for how a device gets its identity and (optional)
+Wi-Fi fallback credentials, `docs/SECURITY.md` for the ESP-NOW authentication model and
+its known gaps, `docs/OTA.md` for how firmware updates map onto this transport split,
+and `docs/TESTING.md` for the failure-scenario test matrix this model requires.
 
 ## Toolchain (decided for Phase 1+)
 
@@ -52,10 +70,14 @@ repeat it, only records how the repo implements it.
 ## Node Independence
 
 Every camera node runs its own local security/capture/storage logic and only *attempts*
-ESP-NOW delivery to the gateway; if the gateway or network is unreachable, events queue
-locally (persisted, survives reboot) and sync when connectivity returns. This is a hard
-requirement carried into every phase's design — see Sections 5, 28, 65 of the project
-spec.
+delivery to the gateway (over ESP-NOW first, Wi-Fi fallback second — `docs/NETWORK.md`);
+if neither is reachable, the node operates in standalone mode and events are meant to
+queue locally (persisted, survives reboot) and sync when connectivity returns. This is
+a hard requirement carried into every phase's design — see Sections 5, 28, 65 of the
+project spec. **The persisted offline-event queue itself is not yet implemented** —
+local capture/storage already works independent of network state, but automatic
+sync-on-reconnect does not exist yet; see `docs/NETWORK.md` Section 9 for the tracked
+gap.
 
 ## Repository Layout (target — created incrementally per phase)
 

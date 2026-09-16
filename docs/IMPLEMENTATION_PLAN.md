@@ -18,7 +18,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 7 | Multi-Camera Correlation | Compiles clean (both envs) — pending multi-device bench test |
 | 8 | GPS | Compiles clean (both envs) — pending physical GPS module bench test |
 | 9 | MPU6050 | Compiles clean (both envs) — pending physical IMU bench test |
-| 10 | Driving / Parking Modes | Not started |
+| 10 | Driving / Parking Modes | Compiles clean (both envs) — pending physical bench test |
 | 11 | Incident & Evidence Engine | Not started |
 | 12 | Email Notification | Not started |
 | 13 | OLED Displays | Not started |
@@ -626,3 +626,100 @@ surface yet). No page beyond `/` — no navigation, no per-sensor detail pages.
 **Build status: compiles clean, both environments, first attempt** (verified directly —
 node RAM 19.2%/Flash 42.5%). **Not yet bench-tested** — same as everything else since
 Phase 5, this has never been loaded onto a physical, Wi-Fi-connected board.
+
+## Real-hardware findings and fixes (node, live serial log)
+
+The node was flashed and connected to real Wi-Fi ("CodeRunner"). Two genuine bugs
+surfaced from the actual boot log, not guessed:
+
+1. **Task watchdog panic ~21s into boot, during `WiFiManager: Connecting to "CodeRunner"
+   (attempt 1/3)`.** Root cause: `WiFiManager::connectBlocking()` runs synchronously
+   inside `setup()` for up to `connectTimeoutMs` (15s default) per attempt, times
+   `maxRetries`, using bare `delay()` calls that never fed the watchdog `Watchdog::begin(10)`
+   had already armed with a 10s timeout. Any attempt slower than 10s guaranteed a panic
+   and reboot. **Fixed**: the connect-wait loop and the inter-attempt retry delay now
+   call `Watchdog::feed()` every 250ms.
+2. **Camera failed to reinit after that watchdog reboot** (`SCCB_Write Failed... Camera
+   probe failed`), even though it had initialized fine moments earlier. This is a known
+   ESP32-CAM quirk — a soft/watchdog reset doesn't fully power-cycle the OV2640, which
+   can be left in a bad SCCB (I2C) state. **Fixed**: `CameraManager::begin()` now
+   toggles `PWDN` (active-high power-down) before every init attempt, and retries once
+   with a longer toggle if the first attempt still fails.
+3. **SD_MMC mount failed (`0x107`)** — confirmed **not a bug**: no card was inserted
+   (intentional). The existing graceful-degradation path already handled it correctly —
+   confirmed directly from the same log: `SD unavailable — continuing without local
+   evidence storage` was followed by normal continuation into RCWL/DHT checks and
+   Wi-Fi connect, no crash or halt. `EvidenceManager::isAvailable()` gates every SD
+   write, so camera capture and ESP-NOW motion forwarding both continue working with
+   `hasImage:true` in the payload even with nothing persisted. No code change needed;
+   confirmed working as designed, not just assumed.
+
+Both fixes rebuilt clean on both environments. Not yet reflashed/reverified on hardware
+as of this writing — that's the immediate next step regardless of which phase follows.
+
+## Phase 10 — Driving / Parking Modes
+
+**Implemented:**
+- `SecurityModeConfig` (shared, persisted at `/config/security_mode.json`) — the four
+  Section 16 modes (`DISARMED`, `DRIVING`, `PARKED`, `SERVICE`), plus a `manualOverride`
+  flag distinguishing an explicit `MODE` command from the gateway's own auto-detection.
+  `securityModeAllowsMotionAlerts()` centralizes the one rule every caller needs: only
+  `PARKED` runs full motion alerting.
+- Gateway-side Section 44 auto-detection: every 2s (while not manually overridden),
+  checks GPS speed (`>5 km/h`) and IMU movement (accel deviation `>0.15g` from the ~1g
+  at-rest reading, or gyro `>15°/s`) — either signals "moving." Requires 5 consecutive
+  matching checks (~10s) before actually switching modes, to avoid flapping on a single
+  noisy reading. Switches only ever land on `DRIVING` or `PARKED` automatically —
+  `DISARMED`/`SERVICE` are always explicit, never auto-entered.
+- On any mode change, the gateway broadcasts it to every **enabled** registry device via
+  the same `CONFIG_UPDATE` envelope Phase 6 already uses for remote commands
+  (`{"cmd":"SET_MODE","value":"DRIVING"}`) — no new message type needed.
+- New gateway serial commands: `MODE` (show current), `MODE <mode>` (manual override),
+  `AUTOMODE` (clears the override, resumes Section 44 detection on the next sustained
+  reading rather than forcing an immediate switch).
+- IMU impact detection (Phase 9) is now gated by mode: skipped entirely while
+  `DISARMED` (Section 16: "security alerts disabled" — impact detection counts as one),
+  active in every other mode, including `DRIVING` where it matters most (Section 22's
+  hard-braking/impact use case).
+- Node: stores whatever mode the gateway last broadcast (persisted, survives reboot —
+  though a node that reboots before hearing a fresh broadcast starts from its last
+  known mode, not necessarily what's currently true; it'll catch up on the gateway's
+  next mode change or periodic re-broadcast, though there is no periodic re-broadcast
+  today, only broadcast-on-change — a node that misses the one `CONFIG_UPDATE` for a
+  mode change, e.g. it was unreachable at that moment, has no way to learn the current
+  mode until the next change. Known gap, not solved this phase). A confirmed RCWL
+  trigger is still always fed through `MotionEventEngine` (debounce/cooldown state stays
+  consistent regardless of mode) — only the *alerting* (capture + ESP-NOW forward) is
+  gated by `securityModeAllowsMotionAlerts()`.
+- `STATUS` and the status page (both node and gateway) now show the current mode.
+
+**Not implemented (by design):** any actual behavior change for `DRIVING` beyond
+suppressing motion alerts — Section 15's "Dashcam Mode" (periodic snapshots, rolling
+storage, GPS/IMU-tagged event clips) isn't a numbered phase in the master plan at all
+and is out of scope here; Phase 10's own text only asks for the four modes to exist and
+gate *existing* behavior (motion alerts, impact detection), which this does. No
+ignition-signal integration (Section 44 explicitly defers that: "do not connect
+directly to vehicle electronics without appropriate electrical isolation").
+
+**Build status: compiles clean, both environments, first attempt** (verified directly —
+node RAM 19.2%/Flash 42.7%). **Not yet bench-tested** — mode auto-detection in
+particular needs an actual drive (or a convincing simulation: moving the GPS module,
+shaking the IMU) to verify the hysteresis behaves sensibly rather than flapping.
+
+**Known limitations / risks to verify on hardware:**
+- Movement thresholds (5 km/h, 0.15g, 15°/s) and the 10s hysteresis window are
+  first-pass guesses, not tuned against a real drive — expect adjustment once tested.
+- The "node missed the mode-change broadcast" gap above — a real risk if ESP-NOW
+  delivery to a given node is spotty at the moment a mode change happens.
+- `applyModeChange()` broadcasts to every *enabled* device in the registry regardless
+  of whether it's actually reachable right now; the underlying `sendMessage()` still
+  gets bounded-retried per Phase 5, but there's no confirmation loop specifically for
+  mode delivery.
+
+## Next Step
+
+Reflash the node with the watchdog/camera fixes above and confirm a clean boot with no
+crash loop. Then flash the gateway and bench-test Phase 10: manually cycle through all
+four modes via `MODE`, confirm a node suppresses/allows motion alerts correctly per
+mode, and (outdoors, with GPS fix) confirm `AUTOMODE` correctly detects a real DRIVING
+transition. Once that's solid, continue with Phase 11 (Incident & Evidence Engine).

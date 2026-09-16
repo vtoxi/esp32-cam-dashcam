@@ -29,6 +29,7 @@
 #include "EspNowManager.h"
 #include "PeerRegistry.h"
 #include "StatusPage.h"
+#include "SecurityModeConfig.h"
 
 #include <ArduinoJson.h>
 
@@ -159,6 +160,14 @@ static void onEspNowMessage(const EspNowMessage& msg, const uint8_t mac[6]) {
         dev.role = roleFromString(value);
         DeviceConfig::save(dev);
         Logger::info(TAG, "Remote SETROLE applied: role=" + String(roleToString(dev.role)));
+    } else if (cmd == "SET_MODE") {
+        // Section 16: the gateway is the authority on the current security mode
+        // (it's the one running Section 44's auto-detection); nodes just store and
+        // obey whatever it last broadcast. "manual" is meaningless on a node itself —
+        // stored as false since a node never runs its own auto-detection loop to defer to.
+        SecurityMode newMode = securityModeFromString(value);
+        SecurityModeConfig::setMode(newMode, false);
+        Logger::info(TAG, "Security mode set by gateway: " + String(securityModeToString(newMode)));
     } else if (cmd == "RESTART") {
         restartInto("remote RESTART command from gateway");
     } else if (cmd == "FACTORY_RESET") {
@@ -333,6 +342,7 @@ static void handleSerialCommands() {
         bool haveGw = EspNowManager::findGatewayMac(gwMac);
         Logger::info(TAG, "espnow.active=" + String(espNowActive) + " peers=" +
                      String(PeerRegistry::count()) + " gatewayDiscovered=" + String(haveGw));
+        Logger::info(TAG, "securityMode=" + String(securityModeToString(SecurityModeConfig::getMode())));
         Diagnostics::logSnapshot(TAG);
     }
 }
@@ -371,6 +381,7 @@ static String buildStatusHtml() {
     uint8_t gwMac[6];
     bool haveGw = EspNowManager::findGatewayMac(gwMac);
     html += "<table>";
+    html += "<tr><td class=k>Security Mode</td><td>" + String(securityModeToString(SecurityModeConfig::getMode())) + "</td></tr>";
     html += "<tr><td class=k>ESP-NOW</td><td>" + String(espNowActive ? "active" : "inactive") + "</td></tr>";
     html += "<tr><td class=k>Known peers</td><td>" + String(PeerRegistry::count()) + "</td></tr>";
     html += "<tr><td class=k>Gateway discovered</td><td>" + String(haveGw ? "yes" : "no") + "</td></tr>";
@@ -403,6 +414,8 @@ void setup() {
 
     Diagnostics::selfTest();
     Watchdog::begin(10);
+
+    SecurityModeConfig::begin();
 
     // Hardware capabilities before Wi-Fi/provisioning: local sensing/capture must not
     // depend on network state (Section 5).
@@ -489,7 +502,18 @@ void loop() {
     if (caps.rcwl && caps.rcwlGpio != GPIO_UNCONFIGURED) {
         bool raw = MotionSensor::isTriggered();
         if (MotionEventEngine::update(raw)) {
-            captureAndRecordEvent("MOTION_DETECTED", "SUSPICIOUS");
+            // Section 16: only PARKED runs full motion alerting — DRIVING/DISARMED/
+            // SERVICE all suppress it (road vibration during DRIVING isn't a security
+            // event; DISARMED/SERVICE are explicit "don't alert me" states). The
+            // confirmed-motion signal is still consumed (MotionEventEngine::update()
+            // already ran above) so the cooldown/debounce state stays consistent
+            // regardless of mode.
+            if (securityModeAllowsMotionAlerts(SecurityModeConfig::getMode())) {
+                captureAndRecordEvent("MOTION_DETECTED", "SUSPICIOUS");
+            } else {
+                Logger::info(TAG, "Motion confirmed but suppressed (mode=" +
+                             String(securityModeToString(SecurityModeConfig::getMode())) + ")");
+            }
         }
     }
 

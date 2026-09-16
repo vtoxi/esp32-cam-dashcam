@@ -28,6 +28,7 @@
 #include "MacAddress.h"
 #include "IncidentCorrelator.h"
 #include "StatusPage.h"
+#include "SecurityModeConfig.h"
 
 #include <ArduinoJson.h>
 
@@ -177,6 +178,30 @@ static bool sendNodeCommand(const String& nodeId, const String& cmd, const Strin
     return sent;
 }
 
+// Section 16: every known device needs to agree on the current mode, since it's what
+// gates a node's own motion-alert behavior (securityModeAllowsMotionAlerts). Reuses the
+// same CONFIG_UPDATE envelope as every other remote command (Section 6) rather than
+// inventing a dedicated message type for this one case.
+static void broadcastModeToAllDevices(SecurityMode mode) {
+    String value = securityModeToString(mode);
+    for (uint8_t i = 0; i < DeviceRegistry::count(); i++) {
+        DeviceRegistryEntry* d = DeviceRegistry::get(i);
+        if (d->enabled) {
+            sendNodeCommand(d->nodeId, "SET_MODE", value);
+        }
+    }
+}
+
+static void applyModeChange(SecurityMode mode, bool manual) {
+    if (mode == SecurityModeConfig::getMode() && manual == SecurityModeConfig::isManualOverride()) {
+        return;  // no actual change — don't spam a redundant broadcast
+    }
+    SecurityModeConfig::setMode(mode, manual);
+    Logger::warn(TAG, "Security mode -> " + String(securityModeToString(mode)) +
+                 (manual ? " (manual)" : " (auto-detected: GPS speed / IMU movement — Section 44)"));
+    broadcastModeToAllDevices(mode);
+}
+
 static void initHardwareCapabilities() {
     DeviceConfigData dev = DeviceConfig::get();
     if (dev.hardwareProfile == "UNKNOWN") {
@@ -267,6 +292,8 @@ static void handleSerialCommands() {
                          ", gyroDps=" + String(t.gyroMagnitudeDps, 1) +
                          ", cooldownMs=" + String(t.cooldownMs) + ")");
         }
+        Logger::info(TAG, "securityMode=" + String(securityModeToString(SecurityModeConfig::getMode())) +
+                     " manualOverride=" + String(SecurityModeConfig::isManualOverride()));
         Logger::info(TAG, "espnow.active=" + String(espNowActive) + " peers=" + String(PeerRegistry::count()));
         for (uint8_t i = 0; i < PeerRegistry::count(); i++) {
             PeerInfo* p = PeerRegistry::get(i);
@@ -352,6 +379,23 @@ static void handleSerialCommands() {
             Logger::info(TAG, "IMU thresholds updated: accelG=" + String(t.accelMagnitudeG, 2) +
                          " gyroDps=" + String(t.gyroMagnitudeDps, 1));
         }
+    } else if (line == "MODE") {
+        Logger::info(TAG, "Security mode: " + String(securityModeToString(SecurityModeConfig::getMode())) +
+                     (SecurityModeConfig::isManualOverride() ? " (manual)" : " (auto)"));
+    } else if (line.startsWith("MODE ")) {
+        String modeStr, unused;
+        splitArgs(line, modeStr, unused);
+        if (modeStr != "DISARMED" && modeStr != "DRIVING" && modeStr != "PARKED" && modeStr != "SERVICE") {
+            Logger::warn(TAG, "Usage: MODE <DISARMED|DRIVING|PARKED|SERVICE>");
+        } else {
+            applyModeChange(securityModeFromString(modeStr), true);
+        }
+    } else if (line == "AUTOMODE") {
+        // Section 44: resumes GPS-speed/IMU-movement auto-detection. Doesn't force an
+        // immediate mode change — the detection loop's own hysteresis (see loop())
+        // picks it up on the next sustained reading.
+        SecurityModeConfig::setMode(SecurityModeConfig::getMode(), false);
+        Logger::info(TAG, "Resumed automatic DRIVING/PARKED detection");
     }
 }
 
@@ -386,6 +430,8 @@ static String buildStatusHtml() {
     html += "</table>";
 
     html += "<table>";
+    html += "<tr><td class=k>Security Mode</td><td>" + String(securityModeToString(SecurityModeConfig::getMode())) +
+            (SecurityModeConfig::isManualOverride() ? " (manual)" : " (auto)") + "</td></tr>";
     html += "<tr><td class=k>ESP-NOW</td><td>" + String(espNowActive ? "active" : "inactive") + "</td></tr>";
     html += "<tr><td class=k>Peers seen</td><td>" + String(PeerRegistry::count()) + "</td></tr>";
     html += "</table>";
@@ -443,6 +489,7 @@ void setup() {
 
     DeviceRegistry::begin();
     IncidentCorrelator::begin();
+    SecurityModeConfig::begin();
 
     if (!provisioningMode) {
         espNowActive = EspNowManager::begin(cfg.nodeId, roleToString(cfg.role));
@@ -468,7 +515,8 @@ void setup() {
 
     Logger::info(TAG, "Boot complete. Serial commands: STATUS, FACTORY_RESET, PROVISION, "
                  "DEVICES, RENAME <id> <name>, ENABLE <id>, DISABLE <id>, REMOVE <id>, "
-                 "SETROLE <id> <role>, RESTART <id>, RESET <id>, IMUTHRESHOLDS <accelG> <gyroDps>");
+                 "SETROLE <id> <role>, RESTART <id>, RESET <id>, IMUTHRESHOLDS <accelG> <gyroDps>, "
+                 "MODE, MODE <DISARMED|DRIVING|PARKED|SERVICE>, AUTOMODE");
     Diagnostics::logSnapshot(TAG);
 }
 
@@ -507,11 +555,50 @@ void loop() {
 
     static unsigned long lastImuRead = 0;
     const unsigned long IMU_READ_INTERVAL_MS = 100;  // frequent enough to catch a sharp impact
+    ImuReading lastImuReading;  // reused below for mode auto-detection, avoids a second I2C read
+    bool haveImuReading = false;
     if (caps.imu && ImuManager::isInitialized() && now - lastImuRead >= IMU_READ_INTERVAL_MS) {
         lastImuRead = now;
-        ImuReading reading = ImuManager::read();
-        if (ImuManager::checkImpact(reading)) {
-            reportImuImpact(reading);
+        lastImuReading = ImuManager::read();
+        haveImuReading = lastImuReading.valid;
+        // Section 16: DISARMED means "security alerts disabled" — impact detection
+        // counts as one, so it's skipped entirely while disarmed rather than just
+        // suppressing the report (keeps the cooldown from being consumed by an event
+        // nobody will hear about anyway).
+        if (SecurityModeConfig::getMode() != SecurityMode::DISARMED &&
+            ImuManager::checkImpact(lastImuReading)) {
+            reportImuImpact(lastImuReading);
+        }
+    }
+
+    // Section 44: automatic DRIVING/PARKED detection from GPS speed + IMU movement.
+    // Paused while a manual MODE command is in effect (DISARMED/SERVICE, or a forced
+    // DRIVING/PARKED) — resumed with AUTOMODE.
+    static unsigned long lastModeCheck = 0;
+    static uint8_t movingStreak = 0, stationaryStreak = 0;
+    const unsigned long MODE_CHECK_INTERVAL_MS = 2000;
+    const uint8_t MODE_SWITCH_STREAK = 5;  // ~10s of sustained state before switching
+    const float MOVEMENT_ACCEL_DELTA_G = 0.15f;  // deviation from the ~1g at-rest reading
+    const float MOVEMENT_GYRO_DPS = 15.0f;
+    const float MOVEMENT_SPEED_KMPH = 5.0f;
+    if (!SecurityModeConfig::isManualOverride() && now - lastModeCheck >= MODE_CHECK_INTERVAL_MS) {
+        lastModeCheck = now;
+        bool moving = false;
+        if (caps.gps && GpsManager::hasFix() && GpsManager::getFix().speedKmph > MOVEMENT_SPEED_KMPH) {
+            moving = true;
+        }
+        if (haveImuReading &&
+            (fabsf(lastImuReading.accelMagnitudeG - 1.0f) > MOVEMENT_ACCEL_DELTA_G ||
+             lastImuReading.gyroMagnitudeDps > MOVEMENT_GYRO_DPS)) {
+            moving = true;
+        }
+        if (moving) { movingStreak++; stationaryStreak = 0; }
+        else { stationaryStreak++; movingStreak = 0; }
+
+        if (movingStreak >= MODE_SWITCH_STREAK && SecurityModeConfig::getMode() != SecurityMode::DRIVING) {
+            applyModeChange(SecurityMode::DRIVING, false);
+        } else if (stationaryStreak >= MODE_SWITCH_STREAK && SecurityModeConfig::getMode() != SecurityMode::PARKED) {
+            applyModeChange(SecurityMode::PARKED, false);
         }
     }
 

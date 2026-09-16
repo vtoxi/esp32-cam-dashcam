@@ -4,36 +4,41 @@ A modular, configuration-driven, distributed ESP32 vehicle dashcam, security, te
 and black-box platform — built for a Peugeot 2008 prototype install, designed to run on
 any vehicle.
 
-> **Status: all 20 phases now have either working firmware or a documented plan**
-> (Phase 20 Vehicle Installation is a physical install phase with no firmware
-> component — a planning checklist lives in `docs/wiring/VEHICLE_INSTALLATION.md`).
-> Boot/identity/config (Phase 1), BLE+AP provisioning (Phase 2), capability-gated
-> hardware init (Phase 3), a working motion → confirm → capture → local-evidence
-> pipeline (Phase 4), node-to-gateway ESP-NOW communication (Phase 5), a zero-code
-> auto-populating gateway device registry with remote commands (Phase 6), cross-camera
-> correlation (Phase 7), real NEO-6M NMEA parsing (Phase 8), MPU6050 accel/gyro reads
-> with configurable, never-claims-a-crash impact-threshold detection (Phase 9),
-> `DISARMED`/`DRIVING`/`PARKED`/`SERVICE` security modes auto-detected from GPS/IMU
-> (Phase 10), real persisted incident records with full lifecycle and GPS/IMU/DHT
-> association (Phase 11), email alerts tied to the incident engine (Phase 12),
-> dual-SSD1306 OLED status pages (Phase 13), gateway self-update over HTTP(S) with
-> MD5-verified streaming writes (Phase 14 — node self-update is a documented hardware
-> limitation, see below), a pluggable heuristic threat-scoring framework that gates
-> incident email alerts on assessed severity (Phases 15–16 — real on-device ML was
-> evaluated and scoped out, see docs), Wi-Fi modem sleep while parked (Phase 17 — full
-> deep-sleep deliberately scoped out to protect the verified motion-alert pipeline), a
-> capability-gated ignition-sense input that drives DRIVING/PARKED directly when wired
-> (Phase 18 — OBD-II/CAN blocked on not yet having a confirmed harness), and a real
-> gateway-hosted dashboard: live device/incident data, a JSON companion API, and a live
-> camera stream proxy (Phase 19). **Compiles clean for both targets, and both the node
-> and gateway have now been flashed and tested together on real hardware** —
-> zero-code device discovery (Phase 6) confirmed working end-to-end. Multi-camera
-> correlation (Phase 7), GPS fix acquisition, IMU, mode auto-transitions, and every
-> Phase 13–19 feature are still pending a physical bench test. Classic ESP32 camera
-> nodes cannot fit OTA's flash-write code within their fixed IRAM budget alongside
-> WiFi/BLE/camera — a real, measured link failure, not a guess — so OTA is gateway-only
-> this phase. See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for full
-> phase status and known limitations.
+> **Status: all 20 core phases have working firmware or a documented plan, plus
+> Phase 21 (optional remote backend) underway.** Quick orientation:
+>
+> - **Phases 1–19**: full local system — provisioning, capability-gated hardware
+>   init, motion → capture → local evidence, ESP-NOW mesh, zero-code device
+>   discovery, multi-camera correlation, GPS/IMU, auto security modes, incident
+>   engine, email alerts, OLED displays, gateway OTA, a heuristic AI threat-scoring
+>   layer, Wi-Fi modem sleep while parked, ignition-sense input, and a gateway-hosted
+>   dashboard with live camera streaming, flash control, and a Settings page (Wi-Fi
+>   networks + SMTP). **Compiles clean for both targets; node and gateway have been
+>   flashed and tested together on real hardware** (zero-code device discovery
+>   confirmed end-to-end) — most individual features are still pending their own
+>   physical bench test (tracked per-phase in `docs/IMPLEMENTATION_PLAN.md`).
+> - **Phase 20**: vehicle install — a planning checklist
+>   (`docs/wiring/VEHICLE_INSTALLATION.md`), no firmware component, no physical
+>   install done yet.
+> - **Networking architecture**: reworked to be **ESP-NOW-primary / Wi-Fi-fallback /
+>   standalone-mandatory** — a node's normal operation needs no Wi-Fi credentials, no
+>   router, no Internet. ESP-NOW now starts unconditionally on every boot; Wi-Fi is
+>   an opt-out fallback (`WIFIFALLBACK ON|OFF`); a `TransportManager` state machine
+>   and a persisted `OfflineQueue` mean an event generated while the gateway is
+>   unreachable is queued, not lost. Full design and exactly what's implemented vs.
+>   still open: [docs/NETWORK.md](docs/NETWORK.md).
+> - **Phase 21 (Remote Backend, API & Hybrid Connectivity)** — optional, off by
+>   default, never a dependency for anything above: 21.1 (architecture audit) and
+>   21.2 (backend abstraction — `RemoteSyncManager`/`RemoteBackend`/`HttpBackend`,
+>   configurable via the dashboard's Settings page or `BACKENDCONFIG`) are done and
+>   compile clean; there is no backend server yet to actually sync with. See
+>   [docs/BACKEND.md](docs/BACKEND.md) and [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md).
+> - Classic ESP32 camera nodes cannot fit OTA's flash-write code within their fixed
+>   IRAM budget alongside WiFi/BLE/camera — a real, measured link failure, not a
+>   guess — so OTA is gateway-only.
+>
+> See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the full
+> phase-by-phase status, every known limitation, and what's next.
 
 ## Overview
 
@@ -49,16 +54,32 @@ and local storage do not depend on the gateway, Wi-Fi, or Internet being availab
 
 ## Features (planned — see phase status)
 
-- Multi-camera coordination over ESP-NOW, each camera independently functional
+- Multi-camera coordination over ESP-NOW (primary transport — no Wi-Fi required for
+  normal node operation), each camera independently functional
+- Wi-Fi fallback (opt-out per device) + mandatory standalone operation when neither
+  transport reaches the gateway, with a persisted offline event queue that syncs
+  automatically on reconnect (`TransportManager`/`OfflineQueue`) — see
+  [docs/NETWORK.md](docs/NETWORK.md)
+- Multiple remembered Wi-Fi networks per device, tried in order at boot
 - BLE and temporary-AP provisioning — add/remove/reassign a camera with no code changes
 - RCWL-0516 motion detection with debounce/cooldown, DHT temperature/humidity logging
 - GPS (NEO-6M) and IMU (MPU6050) telemetry, correlated into incident records
+- A pluggable heuristic AI threat-scoring layer that gates incident email alerts on
+  assessed severity (real on-device ML evaluated and scoped out — see
+  `docs/IMPLEMENTATION_PLAN.md` Phase 15/16)
 - Dual SSD1306 OLED status displays with configurable pages
 - Local evidence storage on microSD with automatic retention cleanup
-- Offline event queueing — incidents sync to the gateway when connectivity returns
-- Email notifications (optional), AI-assisted classification (optional, never required)
+- Email notifications (optional), capability-gated ignition-sense input for
+  DRIVING/PARKED detection
+- Gateway-hosted dashboard: live device/incident data, a JSON companion API, live
+  camera streaming + flash control, and a Settings page (Wi-Fi networks, SMTP,
+  optional remote backend)
 - OTA firmware updates with checksum verification and health-check rollback
-- Configurable security modes: `DISARMED`, `DRIVING`, `PARKED`, `SERVICE`
+  (gateway-only — classic ESP32 camera nodes can't fit it in their IRAM budget)
+- Configurable security modes: `DISARMED`, `DRIVING`, `PARKED`, `SERVICE`, with
+  Wi-Fi modem sleep while parked
+- Optional remote backend sync (off by default, never a dependency for anything
+  above) — see [docs/BACKEND.md](docs/BACKEND.md)
 
 ## Architecture
 
@@ -69,14 +90,18 @@ Camera / Sensor Nodes (ESP32-CAM, generic firmware)
 ```
 
 A node's normal operation requires no Wi-Fi credentials, no router, and no Internet —
-ESP-NOW is the default transport, Wi-Fi is a fallback, and full standalone local
-operation (motion/capture/evidence/telemetry) is mandatory when neither is reachable.
-**This is the target architecture, not yet fully matched by the current
-implementation** — see [docs/NETWORK.md](docs/NETWORK.md) for the design and exactly
-where today's code differs from it, plus
+ESP-NOW is the default transport (starts unconditionally on every boot), Wi-Fi is an
+opt-out fallback (`WIFIFALLBACK ON|OFF`), and full standalone local operation
+(motion/capture/evidence/telemetry) is mandatory when neither is reachable, with a
+`TransportManager` state machine and a persisted `OfflineQueue` so nothing generated
+while unreachable is lost. See [docs/NETWORK.md](docs/NETWORK.md) for the full design
+and exactly what's implemented vs. still open (gateway-identity validation and
+Wi-Fi-fallback message *delivery* remain open gaps), plus
 [docs/PROVISIONING.md](docs/PROVISIONING.md),
-[docs/SECURITY.md](docs/SECURITY.md), [docs/OTA.md](docs/OTA.md), and
-[docs/TESTING.md](docs/TESTING.md). Full diagrams and design rationale:
+[docs/SECURITY.md](docs/SECURITY.md), [docs/OTA.md](docs/OTA.md),
+[docs/TESTING.md](docs/TESTING.md), and — for the optional remote backend layer sitting
+above the gateway — [docs/BACKEND.md](docs/BACKEND.md) and
+[docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md). Full diagrams and design rationale:
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Hardware
@@ -111,15 +136,18 @@ Arduino core for ESP32, built via PlatformIO (two environments: `gateway`, `node
 7. pio device monitor             # watch boot logs; try STATUS, FACTORY_RESET, PROVISION
 ```
 
-On first boot (no saved Wi-Fi credentials), a device currently opens **both** BLE and a
-temporary Wi-Fi AP (`CarSentinel-Setup-<id>`) for provisioning — connect to the AP and
-browse to `192.168.4.1`, or use a BLE GATT client, to set identity (display name, role)
-and, if Wi-Fi fallback is wanted, the Wi-Fi SSID/password/hostname; the device reboots
-into normal operation once submitted. Send `PROVISION` over serial at any time to clear
-saved Wi-Fi credentials and re-open provisioning without a full factory reset.
-**Today, entering this Wi-Fi/BLE provisioning flow is also what currently gates when
-ESP-NOW starts on a node — a known architecture gap being closed per
-[docs/NETWORK.md](docs/NETWORK.md), not the target behavior.**
+ESP-NOW starts immediately on every boot, independent of Wi-Fi — a node with no saved
+Wi-Fi credentials and Wi-Fi fallback disabled (`WIFIFALLBACK OFF`) never opens
+provisioning for Wi-Fi at all and talks to its gateway over ESP-NOW right away. With
+Wi-Fi fallback enabled (the default) and no saved credentials, a device opens **both**
+BLE and a temporary Wi-Fi AP (`CarSentinel-Setup-<id>`) for provisioning — connect to
+the AP and browse to `192.168.4.1`, or use a BLE GATT client, to set identity (display
+name, role) and the Wi-Fi SSID/password/hostname; the device reboots into normal
+operation once submitted. Send `PROVISION` over serial at any time to clear saved
+Wi-Fi credentials and re-open provisioning without a full factory reset.
+`ProvisioningPortal`'s form doesn't yet let you opt out of the Wi-Fi field *during*
+first-time provisioning itself (`WIFIFALLBACK OFF` right after still works) — see
+[docs/PROVISIONING.md](docs/PROVISIONING.md) for that remaining gap.
 
 Once a device successfully joins your Wi-Fi network (fallback transport, or the
 gateway's own Internet-facing connection — see [docs/NETWORK.md](docs/NETWORK.md)),
@@ -145,31 +173,60 @@ field and a migration seam for future firmware updates (Section 39).
 
 ## OTA
 
-Firmware updates are pushed from the gateway with checksum verification and a
-post-update health check; details land in Phase 14.
+Manual-trigger firmware updates over HTTP(S) with MD5 verification and a post-update
+health check (`OTACHECK`/`OTAUPDATE <manifestUrl>`, or the dashboard). **Gateway-only**
+— classic ESP32 camera nodes can't fit `HTTPClient`/`Update.h`'s flash-write code
+alongside their existing WiFi/BLE/camera footprint within their fixed IRAM budget, a
+real measured link failure documented in `docs/IMPLEMENTATION_PLAN.md` Phase 14 and
+`docs/OTA.md`, not a guess.
+
+## Remote Backend (optional, Phase 21)
+
+The gateway can optionally sync to a remote backend (your own server, or a future
+CarSentinel cloud) over HTTPS — off by default (`LOCAL_ONLY`), and never a dependency
+for anything else in this project: every local feature above works identically with
+it disabled. Configure via the dashboard's Settings page or `BACKENDCONFIG <mode>
+<baseUrl> <deviceId> <credential>` over serial. Only the abstraction layer
+(`RemoteSyncManager`/`HttpBackend`) exists so far — there's no backend server to sync
+with yet, and no retry/persisted queue for backend traffic (dropped on failure, not
+queued — unlike the Node↔Gateway `OfflineQueue`). See
+[docs/BACKEND.md](docs/BACKEND.md) and [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md).
 
 ## Security
 
-Node authentication, message validation, and replay protection for ESP-NOW are designed
-in from Phase 5 onward. Full details and known limitations will be documented in
-`docs/SECURITY.md` once that work begins — not yet written.
+ESP-NOW messages are HMAC-SHA256 signed and sequence-numbered (bounded replay
+protection, not hardened against a sophisticated attacker — documented as such, not
+overstated). Known gaps: every device ships the same compiled-in default HMAC key
+until manually rotated (no key-distribution mechanism yet), and there's no
+cryptographic gateway-identity validation — a device is trusted as "the gateway" on
+the first HELLO claiming that role with a valid HMAC. Full details, the Gateway↔Backend
+TLS/credential boundary Phase 21 adds, and the complete gap list:
+[docs/SECURITY.md](docs/SECURITY.md).
 
 ## Development
 
 `firmware/platformio.ini` defines two environments, `gateway` and `node`, both built
-from one Arduino/PlatformIO project. Shared logic (device identity, persistent config,
-diagnostics, watchdog, logging) lives in `firmware/lib/CarSentinelCommon/`; each
-environment compiles only its own entry point (`firmware/src/gateway_main.cpp` or
-`node_main.cpp`). See Quick Start above for build/flash commands.
+from one Arduino/PlatformIO project. Logic shared by both roles (device identity,
+persistent config, diagnostics, watchdog, logging, transport/queue, sensors) lives in
+`firmware/lib/CarSentinelCommon/`; gateway-only code (dashboard, AI threat scoring,
+remote backend, OLED displays) lives in `firmware/lib/CarSentinelGateway/` — kept
+separate specifically so PlatformIO's dependency finder doesn't pull gateway-only
+libraries into the node build, which matters on classic ESP32's tight IRAM budget (see
+`docs/OTA.md`'s Phase 14 history for why this separation exists). Each environment
+compiles only its own entry point (`firmware/src/gateway_main.cpp` or `node_main.cpp`).
+See Quick Start above for build/flash commands.
 
 ## Wiring
 
 Per-module wiring documentation (pin tables, voltage requirements, safety notes) lives in
-[docs/wiring/](docs/wiring/). Most documents currently carry **TBD** placeholders pending
-exact ESP32-S3 gateway board identification — see
-[docs/wiring/README.md](docs/wiring/README.md) for status per module. Nothing should be
-physically wired from a TBD document.
+[docs/wiring/](docs/wiring/), including the confirmed hardware table above (ESP32-S3-N16R8
+gateway, AI-Thinker ESP32-CAM nodes) and the Phase 20 vehicle-install checklist
+([docs/wiring/VEHICLE_INSTALLATION.md](docs/wiring/VEHICLE_INSTALLATION.md)). Check each
+module's own doc for its current confirmation status before wiring anything.
 
 ## Troubleshooting
 
-Not yet applicable — no firmware exists to troubleshoot.
+No dedicated troubleshooting doc yet. `docs/IMPLEMENTATION_PLAN.md` documents every real
+bug found and fixed so far (watchdog timing, camera reinit after a soft reset, a
+firmware-version display bug, an OTA-vs-IRAM link failure, and others) per-phase, with
+root cause and fix — worth searching before assuming something is a new issue.

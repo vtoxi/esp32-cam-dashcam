@@ -79,7 +79,9 @@ function renderDevices(list){
   if(selected && Array.from(select.options).some(function(option){return option.value===selected;})) select.value=selected;
   if(!list || !list.length){ tb.innerHTML = '<tr><td colspan=6 class=empty>No devices seen yet</td></tr>'; return; }
   tb.innerHTML = list.map(function(d){
-    var badge = !d.enabled ? '<span class=badge>disabled</span>' : (d.lastSeenAgoMs<30000 ? '<span class="badge ok">online</span>' : '<span class="badge warn">stale</span>');
+    var badge = !d.enabled ? '<span class=badge>disabled</span>' :
+      (!d.lastSeenAgoMs ? '<span class=badge>never seen</span>' :
+       (d.lastSeenAgoMs<30000 ? '<span class="badge ok">online</span>' : '<span class="badge warn">stale</span>'));
     return '<tr><td>'+d.nodeId+'</td><td>'+d.displayName+'</td><td>'+d.role+'</td><td>'+badge+'</td><td>'+agoStr(d.lastSeenAgoMs)+'</td><td>'+(d.ip||'-')+'</td></tr>';
   }).join('');
 }

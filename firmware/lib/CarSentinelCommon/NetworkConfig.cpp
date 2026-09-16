@@ -25,6 +25,15 @@ void NetworkConfig::migrate(int fromVersion) {
             current.savedCount++;
         }
         Logger::info(TAG, "Migrated network config v1 -> v2 (single SSID folded into saved list)");
+        // Falls through to v2->v3 below (a v1 config skips straight to v3 in one boot).
+    }
+    if (fromVersion <= 2) {
+        // v2->v3 adds wifiFallbackEnabled — default true (loadFromDisk() already set it
+        // true via the struct default before this runs, since the field didn't exist in
+        // the old JSON), so this is a documentation no-op, not a behavior change: an
+        // existing device that already had Wi-Fi configured keeps working exactly as
+        // before. Only newly-provisioned ESP-NOW-only devices set it false explicitly.
+        Logger::info(TAG, "Migrated network config -> v3 (wifiFallbackEnabled defaults true)");
         return;
     }
     Logger::warn(TAG, "Network config schemaVersion " + String(fromVersion) +
@@ -63,6 +72,7 @@ bool NetworkConfig::loadFromDisk() {
     current.connectTimeoutMs = doc["connectTimeoutMs"] | 15000;
     current.maxRetries = doc["maxRetries"] | 3;
     current.retryIntervalMs = doc["retryIntervalMs"] | 5000;
+    current.wifiFallbackEnabled = doc["wifiFallbackEnabled"] | true;
 
     current.savedCount = 0;
     JsonArray savedArr = doc["saved"].as<JsonArray>();
@@ -120,6 +130,7 @@ bool NetworkConfig::save(const NetworkConfigData& data) {
     doc["connectTimeoutMs"] = current.connectTimeoutMs;
     doc["maxRetries"] = current.maxRetries;
     doc["retryIntervalMs"] = current.retryIntervalMs;
+    doc["wifiFallbackEnabled"] = current.wifiFallbackEnabled;
 
     JsonArray savedArr = doc["saved"].to<JsonArray>();
     for (uint8_t i = 0; i < current.savedCount; i++) {
@@ -147,6 +158,14 @@ bool NetworkConfig::clearCredentials() {
     current.ssid = "";
     current.password = "";
     return save(current);
+}
+
+bool NetworkConfig::setWifiFallbackEnabled(bool enabled) {
+    NetworkConfigData next = current;
+    next.wifiFallbackEnabled = enabled;
+    Logger::info(TAG, String("Wi-Fi fallback ") + (enabled ? "enabled" : "disabled") +
+                 (enabled ? "" : " — this device now operates ESP-NOW only"));
+    return save(next);
 }
 
 bool NetworkConfig::addNetwork(const String& ssid, const String& password) {

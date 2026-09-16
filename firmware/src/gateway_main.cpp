@@ -683,6 +683,12 @@ static void handleSerialCommands() {
         ssid.trim();
         bool ok = NetworkConfig::removeNetwork(ssid);
         Logger::info(TAG, ok ? ("Removed network \"" + ssid + "\"") : "No saved network named \"" + ssid + "\"");
+    } else if (line == "WIFIFALLBACK ON") {
+        NetworkConfig::setWifiFallbackEnabled(true);
+        Logger::info(TAG, "Wi-Fi fallback enabled — restart to take effect on the transport boot order");
+    } else if (line == "WIFIFALLBACK OFF") {
+        NetworkConfig::setWifiFallbackEnabled(false);
+        Logger::info(TAG, "Wi-Fi fallback disabled — restart to run ESP-NOW only");
     } else if (line.startsWith("DISPLAYPAGES ")) {
         // Section 25: "configuration should determine display content, do not hardcode
         // a display's purpose." <index> is 0 or 1; <pages> is a comma-separated list
@@ -855,17 +861,6 @@ void setup() {
 
     initHardwareCapabilities();
 
-    if (NetworkConfig::hasCredentials()) {
-        bool connected = WiFiManager::connectBestKnown();
-        if (!connected) {
-            Logger::warn(TAG, "Saved Wi-Fi credentials failed to connect; opening provisioning");
-            enterProvisioningMode();
-        }
-    } else {
-        Logger::info(TAG, "No saved Wi-Fi credentials; opening provisioning");
-        enterProvisioningMode();
-    }
-
     DeviceRegistry::begin();
     IncidentCorrelator::begin();
     SecurityModeConfig::begin();
@@ -873,12 +868,36 @@ void setup() {
     NotificationManager::begin();
     IncidentCorrelator::setNotificationHandler(assistedIncidentNotify);
 
-    if (!provisioningMode) {
-        espNowActive = EspNowManager::begin(cfg.nodeId, roleToString(cfg.role));
-        if (espNowActive) {
-            EspNowManager::setOnMessageHandler(onEspNowMessage);
-            EspNowManager::setOnPeerHeartbeatHandler(onEspNowHeartbeat);
+    // docs/NETWORK.md: ESP-NOW is the primary transport and starts unconditionally,
+    // regardless of Wi-Fi/provisioning state — this used to be gated behind
+    // `!provisioningMode`, meaning a gateway with no saved Wi-Fi credentials never
+    // started ESP-NOW at all until someone finished Wi-Fi provisioning. That was
+    // backwards: ESP-NOW must work even if Wi-Fi/Internet never gets configured.
+    espNowActive = EspNowManager::begin(cfg.nodeId, roleToString(cfg.role));
+    if (espNowActive) {
+        EspNowManager::setOnMessageHandler(onEspNowMessage);
+        EspNowManager::setOnPeerHeartbeatHandler(onEspNowHeartbeat);
+    }
+
+    // Wi-Fi is independent of ESP-NOW's state — it's the gateway's fallback path for
+    // reaching nodes over IP, and its own path to the router/Internet (email,
+    // dashboard, OTA image downloads). wifiFallbackEnabled defaults true so an
+    // existing gateway keeps its current behavior; set false only for a gateway
+    // deliberately run ESP-NOW-only (unusual, but the config model allows it —
+    // docs/NETWORK.md Section 6).
+    if (NetworkConfig::get().wifiFallbackEnabled) {
+        if (NetworkConfig::hasCredentials()) {
+            bool connected = WiFiManager::connectBestKnown();
+            if (!connected) {
+                Logger::warn(TAG, "Saved Wi-Fi credentials failed to connect; opening provisioning");
+                enterProvisioningMode();
+            }
+        } else {
+            Logger::info(TAG, "No saved Wi-Fi credentials; opening provisioning");
+            enterProvisioningMode();
         }
+    } else {
+        Logger::info(TAG, "Wi-Fi fallback disabled (WIFIFALLBACK OFF) — running ESP-NOW only");
     }
 
     // Boot-summary line: the one thing worth grepping for in a serial log when you just
@@ -903,7 +922,8 @@ void setup() {
                  "EMAILCONFIG <host> <port> <user> <pass> <sender> <recipient>, "
                  "EMAILENABLE, EMAILDISABLE, TESTEMAIL, DISPLAYPAGES <0|1> <PAGE,...>, "
                  "DISPLAYINTERVAL <ms>, OTACHECK <manifestUrl>, OTAUPDATE <manifestUrl>, "
-                 "WIFILIST, WIFIADD <ssid> <password>, WIFIREMOVE <ssid> "
+                 "WIFILIST, WIFIADD <ssid> <password>, WIFIREMOVE <ssid>, "
+                 "WIFIFALLBACK <ON|OFF> "
                  "(also available on the dashboard's Settings page)");
     Diagnostics::logSnapshot(TAG);
 }

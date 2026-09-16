@@ -406,6 +406,12 @@ static void handleSerialCommands() {
         ssid.trim();
         bool ok = NetworkConfig::removeNetwork(ssid);
         Logger::info(TAG, ok ? ("Removed network \"" + ssid + "\"") : "No saved network named \"" + ssid + "\"");
+    } else if (line == "WIFIFALLBACK ON") {
+        NetworkConfig::setWifiFallbackEnabled(true);
+        Logger::info(TAG, "Wi-Fi fallback enabled — restart to take effect");
+    } else if (line == "WIFIFALLBACK OFF") {
+        NetworkConfig::setWifiFallbackEnabled(false);
+        Logger::info(TAG, "Wi-Fi fallback disabled — restart to run ESP-NOW only");
     } else if (line.startsWith("OTACHECK ")) {
         String url = line.substring(9);
         url.trim();
@@ -527,26 +533,39 @@ void setup() {
     // depend on network state (Section 5).
     initHardwareCapabilities();
 
-    if (NetworkConfig::hasCredentials()) {
-        bool connected = WiFiManager::connectBestKnown();
-        if (!connected) {
-            Logger::warn(TAG, "Saved Wi-Fi credentials failed to connect; opening provisioning");
+    // docs/NETWORK.md: ESP-NOW is the primary transport and starts unconditionally,
+    // regardless of Wi-Fi/provisioning state. This used to be gated behind
+    // `!provisioningMode`, which meant a factory-fresh node with no saved Wi-Fi
+    // credentials — the normal case for an ESP-NOW-only camera/sensor — never started
+    // ESP-NOW at all until Wi-Fi was configured. That was backwards: ESP-NOW-only
+    // nodes must not require Wi-Fi credentials to talk to their gateway.
+    espNowActive = EspNowManager::begin(cfg.nodeId, roleToString(cfg.role));
+    if (espNowActive) {
+        EspNowManager::setOnMessageHandler(onEspNowMessage);
+    }
+
+    // Wi-Fi is a fallback, independent of ESP-NOW's state — only touched at all if
+    // wifiFallbackEnabled (default true, preserving today's behavior for anyone
+    // already relying on Wi-Fi; set false via WIFIFALLBACK OFF for a pure ESP-NOW
+    // deployment, which then never shows a Wi-Fi credentials prompt). Known,
+    // documented limitation (docs/NETWORK.md Section 9): entering AP-mode provisioning
+    // below still uses the same Wi-Fi radio ESP-NOW just started on, and may disrupt
+    // it for the duration of that provisioning session — provisioning is meant to be a
+    // brief, occasional state, not normal operation, so this is an accepted trade-off,
+    // not silently ignored.
+    if (NetworkConfig::get().wifiFallbackEnabled) {
+        if (NetworkConfig::hasCredentials()) {
+            bool connected = WiFiManager::connectBestKnown();
+            if (!connected) {
+                Logger::warn(TAG, "Saved Wi-Fi credentials failed to connect; opening provisioning");
+                enterProvisioningMode();
+            }
+        } else {
+            Logger::info(TAG, "No saved Wi-Fi credentials; opening provisioning");
             enterProvisioningMode();
         }
     } else {
-        Logger::info(TAG, "No saved Wi-Fi credentials; opening provisioning");
-        enterProvisioningMode();
-    }
-
-    // ESP-NOW needs a settled Wi-Fi radio mode (STA), which provisioning's AP mode
-    // conflicts with — deferred until provisioning mode isn't active. A node that stays
-    // in provisioning mode simply doesn't forward events over ESP-NOW yet; its local
-    // capture pipeline is unaffected either way (Section 5).
-    if (!provisioningMode) {
-        espNowActive = EspNowManager::begin(cfg.nodeId, roleToString(cfg.role));
-        if (espNowActive) {
-            EspNowManager::setOnMessageHandler(onEspNowMessage);
-        }
+        Logger::info(TAG, "Wi-Fi fallback disabled (WIFIFALLBACK OFF) — running ESP-NOW only");
     }
 
     // Boot-summary line: the one thing worth grepping for in a serial log when you just
@@ -565,7 +584,7 @@ void setup() {
 
     Logger::info(TAG, "Boot complete. Serial commands: STATUS, FACTORY_RESET, PROVISION, CAPTURE, "
                  "OTACHECK <manifestUrl>, OTAUPDATE <manifestUrl>, WIFILIST, "
-                 "WIFIADD <ssid> <password>, WIFIREMOVE <ssid>");
+                 "WIFIADD <ssid> <password>, WIFIREMOVE <ssid>, WIFIFALLBACK <ON|OFF>");
     Diagnostics::logSnapshot(TAG);
 }
 

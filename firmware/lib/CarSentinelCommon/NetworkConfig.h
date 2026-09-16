@@ -11,7 +11,7 @@
 //     Wi-Fi password (Section 41: no credentials in logs).
 namespace CarSentinel {
 
-constexpr int NETWORK_SCHEMA_VERSION = 2;
+constexpr int NETWORK_SCHEMA_VERSION = 3;
 constexpr uint8_t MAX_SAVED_NETWORKS = 5;
 
 struct WifiNetwork {
@@ -37,6 +37,17 @@ struct NetworkConfigData {
     // single ssid/password into saved[0] if it isn't already present.
     WifiNetwork saved[MAX_SAVED_NETWORKS];
     uint8_t savedCount = 0;
+
+    // docs/NETWORK.md's hybrid transport model: ESP-NOW is always the primary
+    // transport (started unconditionally on boot, independent of this flag — see
+    // gateway_main.cpp/node_main.cpp's setup()); Wi-Fi is only a fallback, and only
+    // touched at all when this is true. False means "ESP-NOW only" — the device never
+    // calls WiFi.begin(), never opens AP-mode provisioning, and never prompts for
+    // Wi-Fi credentials. Defaults true so existing saved configs (and the gateway,
+    // which normally wants Internet/dashboard access) keep working exactly as before
+    // this flag existed; a pure ESP-NOW node sets it false explicitly (WIFIFALLBACK
+    // OFF serial command, or the dashboard Settings page).
+    bool wifiFallbackEnabled = true;
 
     String hostname;              // defaults to nodeId-derived value at first save
     bool useStaticIP = false;
@@ -76,6 +87,8 @@ public:
     // WiFiManager::connectBestKnown() after a successful connection to a non-primary
     // saved network, and by provisioning when a fresh SSID/password is submitted.
     static bool setPrimary(const String& ssid, const String& password);
+
+    static bool setWifiFallbackEnabled(bool enabled);
 
 private:
     static NetworkConfigData current;

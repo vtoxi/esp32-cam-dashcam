@@ -37,6 +37,8 @@ private:
     // are both already-shared config classes (same ones gateway_main.cpp itself calls
     // directly), not device drivers this class needs to stay decoupled from.
     static void handleSettingsPage();
+    static void handleApiTransportGet();
+    static void handleApiTransportSave();
     static void handleApiWifiList();
     static void handleApiWifiAdd();
     static void handleApiWifiRemove();

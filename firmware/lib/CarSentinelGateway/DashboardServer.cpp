@@ -153,6 +153,12 @@ li{display:flex;justify-content:space-between;align-items:center;padding:6px 0;b
 <a class=back href=/>&larr; Back to dashboard</a>
 <h1>Settings</h1>
 
+<div class=section><h2>Network Transport</h2>
+<p class=sub style="color:#8b949e;font-size:0.85em">ESP-NOW is always the primary transport to every node. Wi-Fi is only a fallback (and this gateway's own path to the router/Internet) — disable it to run ESP-NOW only. See docs/NETWORK.md.</p>
+<label><input id=wifiFallbackEnabled type=checkbox style="width:auto;display:inline-block" onchange=saveTransport()> Wi-Fi fallback enabled</label>
+<div class=msg id=transportMsg></div>
+</div>
+
 <div class=section><h2>Wi-Fi networks</h2>
 <p class=sub style="color:#8b949e;font-size:0.85em">Remembered networks, tried in order at boot — add a network without removing the current one.</p>
 <ul id=wifiList></ul>
@@ -175,6 +181,18 @@ li{display:flex;justify-content:space-between;align-items:center;padding:6px 0;b
 </div>
 
 <script>
+function loadTransport(){
+  fetch('/api/settings/transport').then(function(r){return r.json();}).then(function(t){
+    document.getElementById('wifiFallbackEnabled').checked = !!t.wifiFallbackEnabled;
+  });
+}
+function saveTransport(){
+  var enabled = document.getElementById('wifiFallbackEnabled').checked;
+  fetch('/api/settings/transport',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'wifiFallbackEnabled='+(enabled?'1':'0')})
+    .then(function(r){return r.json();}).then(function(d){
+      document.getElementById('transportMsg').textContent = d.ok ? 'Saved. Restart the device for this to take effect.' : 'Failed to save.';
+    });
+}
 function loadWifi(){
   fetch('/api/settings/wifi').then(function(r){return r.json();}).then(function(list){
     var ul=document.getElementById('wifiList');
@@ -224,6 +242,7 @@ function saveEmail(){
       document.getElementById('emailPass').value='';
     });
 }
+loadTransport();
 loadWifi();
 loadEmail();
 </script>
@@ -235,6 +254,17 @@ void DashboardServer::handleRoot() {
 
 void DashboardServer::handleSettingsPage() {
     server.send_P(200, "text/html; charset=utf-8", SETTINGS_HTML);
+}
+
+void DashboardServer::handleApiTransportGet() {
+    server.send(200, "application/json",
+                String("{\"wifiFallbackEnabled\":") +
+                (NetworkConfig::get().wifiFallbackEnabled ? "true" : "false") + "}");
+}
+
+void DashboardServer::handleApiTransportSave() {
+    bool ok = NetworkConfig::setWifiFallbackEnabled(server.arg("wifiFallbackEnabled") == "1");
+    server.send(200, "application/json", String("{\"ok\":") + (ok ? "true" : "false") + "}");
 }
 
 void DashboardServer::handleApiWifiList() {
@@ -330,6 +360,8 @@ void DashboardServer::begin(const String& deviceTitle, JsonContentProvider statu
     server.on("/api/incidents", HTTP_GET, handleApiIncidents);
     server.on("/stream", HTTP_GET, handleStream);
     server.on("/settings", HTTP_GET, handleSettingsPage);
+    server.on("/api/settings/transport", HTTP_GET, handleApiTransportGet);
+    server.on("/api/settings/transport", HTTP_POST, handleApiTransportSave);
     server.on("/api/settings/wifi", HTTP_GET, handleApiWifiList);
     server.on("/api/settings/wifi/add", HTTP_POST, handleApiWifiAdd);
     server.on("/api/settings/wifi/remove", HTTP_POST, handleApiWifiRemove);

@@ -46,7 +46,9 @@ th{color:#8b949e;font-weight:600;font-size:0.8em;text-transform:uppercase;}
 <h1 id=title>CarSentinel Dashboard</h1>
 <p class=sub>Live view, polling every 3s. Companion JSON API: <code>/api/status</code>, <code>/api/devices</code>, <code>/api/incidents</code>.</p>
 <div class=grid id=statusCards></div>
-<div class=section><h2>Live camera</h2><select id=cameraSelect onchange=selectCamera()><option value=''>Select a camera</option></select><br><img id=cameraFeed alt='Live camera feed' style='display:block;max-width:100%;margin-top:10px;background:#000'></div>
+<div class=section><h2>Live camera</h2><select id=cameraSelect onchange=selectCamera()><option value=''>Select a camera</option></select>
+<button id=flashBtn onclick=toggleFlash() disabled>Flash</button>
+<br><img id=cameraFeed alt='Live camera feed' style='display:block;max-width:100%;margin-top:10px;background:#000'></div>
 <div class=section><h2>Devices</h2><table id=devicesTable><thead><tr><th>Node</th><th>Name</th><th>Role</th><th>Status</th><th>Last seen</th><th>IP</th></tr></thead><tbody></tbody></table></div>
 <div class=section><h2>Recent Incidents</h2><table id=incidentsTable><thead><tr><th>ID</th><th>State</th><th>Trigger</th><th>Severity</th><th>Evidence</th></tr></thead><tbody></tbody></table></div>
 <script>
@@ -68,15 +70,19 @@ function renderStatus(d){
   cards.forEach(function(c){ html += '<div class=card><h3>'+c[0]+'</h3><div class=val>'+c[1]+'</div></div>'; });
   document.getElementById('statusCards').innerHTML = html;
 }
+var cameraIps = {};
 function renderDevices(list){
   var tb = document.querySelector('#devicesTable tbody');
   var select = document.getElementById('cameraSelect');
   var selected = select.value;
   select.innerHTML = '<option value="">Select a camera</option>';
+  cameraIps = {};
   (list||[]).filter(function(d){return d.role==='CAMERA' && d.ip;}).forEach(function(d){
+    cameraIps[d.nodeId] = d.ip;
     var option=document.createElement('option'); option.value=d.nodeId; option.textContent=d.displayName+' ('+d.nodeId+')'; select.appendChild(option);
   });
   if(selected && Array.from(select.options).some(function(option){return option.value===selected;})) select.value=selected;
+  document.getElementById('flashBtn').disabled = !select.value;
   if(!list || !list.length){ tb.innerHTML = '<tr><td colspan=6 class=empty>No devices seen yet</td></tr>'; return; }
   tb.innerHTML = list.map(function(d){
     var badge = !d.enabled ? '<span class=badge>disabled</span>' :
@@ -85,7 +91,20 @@ function renderDevices(list){
     return '<tr><td>'+d.nodeId+'</td><td>'+d.displayName+'</td><td>'+d.role+'</td><td>'+badge+'</td><td>'+agoStr(d.lastSeenAgoMs)+'</td><td>'+(d.ip||'-')+'</td></tr>';
   }).join('');
 }
-function selectCamera(){var n=document.getElementById('cameraSelect').value;var feed=document.getElementById('cameraFeed');feed.onerror=function(){if(n===document.getElementById('cameraSelect').value)setTimeout(selectCamera,1000);};feed.src=n?('/stream?node='+encodeURIComponent(n)):'';}
+function selectCamera(){var n=document.getElementById('cameraSelect').value;var feed=document.getElementById('cameraFeed');feed.onerror=function(){if(n===document.getElementById('cameraSelect').value)setTimeout(selectCamera,1000);};feed.src=n?('/stream?node='+encodeURIComponent(n)):'';document.getElementById('flashBtn').disabled=!n;document.getElementById('flashBtn').textContent='Flash';}
+// Talks directly to the selected node's own IP (StatusPage's /flash route sends
+// Access-Control-Allow-Origin: * for exactly this) rather than routing through the
+// gateway — same "lightest technique, no unnecessary proxying" reasoning as the
+// /stream redirect.
+function toggleFlash(){
+  var n=document.getElementById('cameraSelect').value, ip=cameraIps[n];
+  if(!ip) return;
+  var btn=document.getElementById('flashBtn');
+  var wantOn = btn.textContent.indexOf('ON')<0;
+  fetch('http://'+ip+'/flash?on='+(wantOn?'1':'0')).then(function(r){return r.json();}).then(function(d){
+    btn.textContent = 'Flash: '+(d.flash?'ON':'OFF');
+  }).catch(function(){ btn.textContent='Flash (unreachable)'; });
+}
 function renderIncidents(list){
   var tb = document.querySelector('#incidentsTable tbody');
   if(!list || !list.length){ tb.innerHTML = '<tr><td colspan=5 class=empty>No incidents recorded</td></tr>'; return; }

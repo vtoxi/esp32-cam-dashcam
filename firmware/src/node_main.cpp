@@ -80,6 +80,11 @@ static void streamCamera(WiFiClient client, const String&) {
     client.stop();
 }
 
+static bool flashToggle(bool on) {
+    CameraManager::setFlash(on);
+    return CameraManager::isFlashOn();
+}
+
 static void enterProvisioningMode() {
     provisioningMode = true;
     const DeviceConfigData& dev = DeviceConfig::get();
@@ -449,6 +454,19 @@ static String buildStatusHtml() {
     html += "<tr><td class=k>Gateway discovered</td><td>" + String(haveGw ? "yes" : "no") + "</td></tr>";
     html += "</table>";
 
+    if (CameraManager::isInitialized()) {
+        html += "<p class=sub>Live camera:</p>"
+                "<img src='/stream' style='max-width:100%;background:#000' alt='live camera feed'>"
+                "<br><button id=flashBtn>Flash: " + String(CameraManager::isFlashOn() ? "ON" : "OFF") + "</button>"
+                "<script>"
+                "document.getElementById('flashBtn').onclick=function(){"
+                "var wantOn=this.textContent.indexOf('OFF')>=0;"
+                "fetch('/flash?on='+(wantOn?'1':'0')).then(function(r){return r.json();}).then(function(d){"
+                "document.getElementById('flashBtn').textContent='Flash: '+(d.flash?'ON':'OFF');"
+                "});};"
+                "</script>";
+    }
+
     return html;
 }
 
@@ -520,7 +538,7 @@ void setup() {
     } else if (WiFiManager::isConnected()) {
         Logger::info(TAG, "NETWORK: connected, IP=" + WiFiManager::localIP() +
                      " ssid=" + NetworkConfig::get().ssid);
-        StatusPage::begin("CarSentinel Node " + cfg.nodeId, buildStatusHtml, streamCamera);
+        StatusPage::begin("CarSentinel Node " + cfg.nodeId, buildStatusHtml, streamCamera, flashToggle);
     } else {
         Logger::warn(TAG, "NETWORK: not connected (no IP) — Wi-Fi will keep retrying in the background");
     }
@@ -549,7 +567,7 @@ void loop() {
         // Covers the case where Wi-Fi wasn't connected yet at boot (setup() only starts
         // the page immediately on a successful connect) but WiFiManager reconnects later.
         if (!StatusPage::isActive() && WiFiManager::isConnected()) {
-            StatusPage::begin("CarSentinel Node " + DeviceConfig::get().nodeId, buildStatusHtml, streamCamera);
+            StatusPage::begin("CarSentinel Node " + DeviceConfig::get().nodeId, buildStatusHtml, streamCamera, flashToggle);
         }
         StatusPage::loop();
     }

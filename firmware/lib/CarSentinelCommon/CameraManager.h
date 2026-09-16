@@ -22,8 +22,18 @@ public:
 
     static bool isInitialized();
 
+    // AI-Thinker ESP32-CAM's onboard white LED flash is fixed to GPIO4 — safe to drive
+    // directly since SdStorage mounts SD_MMC in 1-bit mode (SdStorage.cpp,
+    // `SD_MMC.begin("/sdcard", true)`), which frees GPIO4 (otherwise SD_MMC D1) for
+    // this. Not a capability/GPIO-configurable setting like the sensors in
+    // CapabilitiesConfig — it's fixed by the board, same reasoning as the camera pins
+    // above.
+    static void setFlash(bool on);
+    static bool isFlashOn();
+
 private:
     static bool initialized;
+    static bool flashOn;
 };
 
 }  // namespace CarSentinel

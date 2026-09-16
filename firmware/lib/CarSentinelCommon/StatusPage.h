@@ -17,19 +17,26 @@ namespace CarSentinel {
 // own relevant state without this shared class knowing about either.
 typedef String (*StatusContentProvider)();
 typedef void (*StatusStreamProvider)(WiFiClient client, const String& nodeId);
+// Called with the requested on/off state; returns the resulting actual state (so the
+// caller can't be lied to by a request that silently failed) — e.g. CameraManager's
+// setFlash()+isFlashOn() on a node with a flash LED wired.
+typedef bool (*StatusFlashToggleProvider)(bool on);
 
 class StatusPage {
 public:
     static void begin(const String& deviceTitle, StatusContentProvider provider,
-                      StatusStreamProvider streamProvider = nullptr);
+                      StatusStreamProvider streamProvider = nullptr,
+                      StatusFlashToggleProvider flashProvider = nullptr);
     static void loop();
     static bool isActive();
 
 private:
     static void handleRoot();
     static void handleStream();
+    static void handleFlash();
     static StatusContentProvider contentProvider;
     static StatusStreamProvider streamProvider;
+    static StatusFlashToggleProvider flashProvider;
     static String title;
     static bool active;
 };

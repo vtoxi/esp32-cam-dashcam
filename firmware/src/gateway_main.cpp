@@ -66,37 +66,22 @@ static void onEspNowHeartbeat(const EspNowMessage& msg, const uint8_t mac[6]) {
     DeviceRegistry::updateHealth(msg.senderNodeId, doc["freeHeap"] | 0, doc["uptimeMs"] | 0);
 }
 
+// Lightest workable technique: rather than the gateway relaying every MJPEG byte
+// through a second raw socket (doubles bandwidth/latency through a single-core-busy
+// WebServer loop and is fragile under real network conditions — the earlier
+// implementation here did exactly that and streaming never reliably worked), just
+// redirect the browser straight to the node's own /stream endpoint. Nodes are on the
+// same LAN as the gateway and the viewer's browser, so there's no reason to proxy.
 static void streamCameraFromNode(WiFiClient client, const String& nodeId) {
     DeviceRegistryEntry* device = DeviceRegistry::find(nodeId);
     if (!device || device->ip.isEmpty()) {
-        client.print("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\nCamera IP unavailable");
+        client.print("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\nCamera IP unavailable "
+                      "(node hasn't sent a heartbeat with its IP yet)");
         client.stop();
         return;
     }
-
-    WiFiClient upstream;
-    if (!upstream.connect(device->ip.c_str(), 80)) {
-        client.print("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\nCamera unreachable");
-        client.stop();
-        return;
-    }
-
-    upstream.print("GET /stream HTTP/1.1\r\nHost: " + device->ip +
-                   "\r\nConnection: close\r\n\r\n");
-
-    unsigned long startedMs = millis();
-    while (client.connected() && upstream.connected() && millis() - startedMs < 35000) {
-        Watchdog::feed();
-        while (upstream.available()) {
-            uint8_t buffer[1024];
-            size_t available = upstream.available();
-            size_t length = available > sizeof(buffer) ? sizeof(buffer) : available;
-            int read = upstream.readBytes(reinterpret_cast<char*>(buffer), length);
-            if (read > 0) client.write(buffer, read);
-        }
-        delay(1);
-    }
-    upstream.stop();
+    client.print("HTTP/1.1 302 Found\r\nLocation: http://" + device->ip +
+                 "/stream\r\nConnection: close\r\n\r\n");
     client.stop();
 }
 

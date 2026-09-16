@@ -5,6 +5,9 @@ namespace CarSentinel {
 
 static const char* TAG = "CameraManager";
 bool CameraManager::initialized = false;
+bool CameraManager::flashOn = false;
+
+#define FLASH_LED_GPIO 4
 
 // Standard CAMERA_MODEL_AI_THINKER pin set — see docs/wiring/ESP32_CAM.md for the
 // per-signal table and verification status.
@@ -115,6 +118,16 @@ void CameraManager::returnFrame(camera_fb_t* fb) {
 
 bool CameraManager::isInitialized() {
     return initialized;
+}
+
+void CameraManager::setFlash(bool on) {
+    pinMode(FLASH_LED_GPIO, OUTPUT);
+    digitalWrite(FLASH_LED_GPIO, on ? HIGH : LOW);
+    flashOn = on;
+}
+
+bool CameraManager::isFlashOn() {
+    return flashOn;
 }
 
 }  // namespace CarSentinel

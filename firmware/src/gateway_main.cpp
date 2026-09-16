@@ -666,6 +666,23 @@ static void handleSerialCommands() {
         Logger::info(TAG, "Sending test email...");
         bool sent = NotificationManager::sendTest();
         Logger::info(TAG, sent ? "Test email sent" : "Test email failed — check EMAILCONFIG and serial log above");
+    } else if (line == "WIFILIST") {
+        const NetworkConfigData& net = NetworkConfig::get();
+        Logger::info(TAG, "Saved Wi-Fi networks (" + String(net.savedCount) + "/" +
+                     String(MAX_SAVED_NETWORKS) + "), primary=\"" + net.ssid + "\":");
+        for (uint8_t i = 0; i < net.savedCount; i++) {
+            Logger::info(TAG, "  " + net.saved[i].ssid);
+        }
+    } else if (line.startsWith("WIFIADD ")) {
+        String ssid, password;
+        splitArgs(line, ssid, password);
+        bool ok = NetworkConfig::addNetwork(ssid, password);
+        Logger::info(TAG, ok ? ("Saved network \"" + ssid + "\"") : "Usage: WIFIADD <ssid> <password>");
+    } else if (line.startsWith("WIFIREMOVE ")) {
+        String ssid = line.substring(11);
+        ssid.trim();
+        bool ok = NetworkConfig::removeNetwork(ssid);
+        Logger::info(TAG, ok ? ("Removed network \"" + ssid + "\"") : "No saved network named \"" + ssid + "\"");
     } else if (line.startsWith("DISPLAYPAGES ")) {
         // Section 25: "configuration should determine display content, do not hardcode
         // a display's purpose." <index> is 0 or 1; <pages> is a comma-separated list
@@ -839,7 +856,7 @@ void setup() {
     initHardwareCapabilities();
 
     if (NetworkConfig::hasCredentials()) {
-        bool connected = WiFiManager::connectBlocking(NetworkConfig::get());
+        bool connected = WiFiManager::connectBestKnown();
         if (!connected) {
             Logger::warn(TAG, "Saved Wi-Fi credentials failed to connect; opening provisioning");
             enterProvisioningMode();
@@ -885,7 +902,9 @@ void setup() {
                  "MODE, MODE <DISARMED|DRIVING|PARKED|SERVICE>, AUTOMODE, INCIDENTS, "
                  "EMAILCONFIG <host> <port> <user> <pass> <sender> <recipient>, "
                  "EMAILENABLE, EMAILDISABLE, TESTEMAIL, DISPLAYPAGES <0|1> <PAGE,...>, "
-                 "DISPLAYINTERVAL <ms>, OTACHECK <manifestUrl>, OTAUPDATE <manifestUrl>");
+                 "DISPLAYINTERVAL <ms>, OTACHECK <manifestUrl>, OTAUPDATE <manifestUrl>, "
+                 "WIFILIST, WIFIADD <ssid> <password>, WIFIREMOVE <ssid> "
+                 "(also available on the dashboard's Settings page)");
     Diagnostics::logSnapshot(TAG);
 }
 

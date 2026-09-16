@@ -11,12 +11,33 @@
 //     Wi-Fi password (Section 41: no credentials in logs).
 namespace CarSentinel {
 
-constexpr int NETWORK_SCHEMA_VERSION = 1;
+constexpr int NETWORK_SCHEMA_VERSION = 2;
+constexpr uint8_t MAX_SAVED_NETWORKS = 5;
+
+struct WifiNetwork {
+    String ssid;
+    String password;
+};
 
 struct NetworkConfigData {
     int schemaVersion = NETWORK_SCHEMA_VERSION;
+    // "Primary" — the last network WiFiManager actually connected to, and what
+    // isConnected()/STATUS commands report. Kept as its own field (rather than "just
+    // use saved[0]") so existing callers (WiFiManager::connectBlocking(),
+    // WiFiManager::loop()'s reconnect) don't need to change at all — multi-network
+    // support is an orchestration layer above this, not a rewrite of already
+    // hardware-verified connect/reconnect logic.
     String ssid;
     String password;
+
+    // Multiple remembered networks (Section: "multiple wifi remember" — e.g. home +
+    // vehicle-mounted hotspot + a bench Wi-Fi). WiFiManager::connectBestKnown() tries
+    // these in order when the primary fails to connect, and promotes whichever
+    // succeeds to become the new primary. Schema v1->v2 migration folds a v1 config's
+    // single ssid/password into saved[0] if it isn't already present.
+    WifiNetwork saved[MAX_SAVED_NETWORKS];
+    uint8_t savedCount = 0;
+
     String hostname;              // defaults to nodeId-derived value at first save
     bool useStaticIP = false;
     String staticIP;
@@ -42,6 +63,19 @@ public:
     // Clears ssid/password only (Section 9 "provisioning reset"); keeps hostname and
     // retry tuning. Used when re-entering provisioning without a full factory reset.
     static bool clearCredentials();
+
+    // Adds ssid/password to the saved list (updating the password in place if that
+    // ssid is already saved), evicting the oldest entry if already at
+    // MAX_SAVED_NETWORKS. Does not change the current primary — that only changes on
+    // an actual successful connection (see WiFiManager::connectBestKnown()).
+    static bool addNetwork(const String& ssid, const String& password);
+    static bool removeNetwork(const String& ssid);
+
+    // Makes ssid/password the primary (what WiFiManager's existing connect/reconnect
+    // logic uses) and ensures it's also in the saved list. Called by
+    // WiFiManager::connectBestKnown() after a successful connection to a non-primary
+    // saved network, and by provisioning when a fresh SSID/password is submitted.
+    static bool setPrimary(const String& ssid, const String& password);
 
 private:
     static NetworkConfigData current;

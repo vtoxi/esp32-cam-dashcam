@@ -65,6 +65,7 @@ void ProvisioningPortal::handleSave() {
         net.hostname = server.arg("hostname");
     }
     NetworkConfig::save(net);
+    NetworkConfig::addNetwork(net.ssid, net.password);  // also remembered for connectBestKnown()
 
     DeviceConfigData dev = DeviceConfig::get();
     if (server.hasArg("displayName") && server.arg("displayName").length() > 0) {

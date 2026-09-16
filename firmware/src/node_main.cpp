@@ -386,6 +386,26 @@ static void handleSerialCommands() {
                      String(PeerRegistry::count()) + " gatewayDiscovered=" + String(haveGw));
         Logger::info(TAG, "securityMode=" + String(securityModeToString(SecurityModeConfig::getMode())));
         Diagnostics::logSnapshot(TAG);
+    } else if (line == "WIFILIST") {
+        const NetworkConfigData& net = NetworkConfig::get();
+        Logger::info(TAG, "Saved Wi-Fi networks (" + String(net.savedCount) + "/" +
+                     String(MAX_SAVED_NETWORKS) + "), primary=\"" + net.ssid + "\":");
+        for (uint8_t i = 0; i < net.savedCount; i++) {
+            Logger::info(TAG, "  " + net.saved[i].ssid);
+        }
+    } else if (line.startsWith("WIFIADD ")) {
+        String rest = line.substring(8);
+        rest.trim();
+        int spaceIdx = rest.indexOf(' ');
+        String ssid = spaceIdx < 0 ? rest : rest.substring(0, spaceIdx);
+        String password = spaceIdx < 0 ? "" : rest.substring(spaceIdx + 1);
+        bool ok = NetworkConfig::addNetwork(ssid, password);
+        Logger::info(TAG, ok ? ("Saved network \"" + ssid + "\"") : "Usage: WIFIADD <ssid> <password>");
+    } else if (line.startsWith("WIFIREMOVE ")) {
+        String ssid = line.substring(11);
+        ssid.trim();
+        bool ok = NetworkConfig::removeNetwork(ssid);
+        Logger::info(TAG, ok ? ("Removed network \"" + ssid + "\"") : "No saved network named \"" + ssid + "\"");
     } else if (line.startsWith("OTACHECK ")) {
         String url = line.substring(9);
         url.trim();
@@ -508,7 +528,7 @@ void setup() {
     initHardwareCapabilities();
 
     if (NetworkConfig::hasCredentials()) {
-        bool connected = WiFiManager::connectBlocking(NetworkConfig::get());
+        bool connected = WiFiManager::connectBestKnown();
         if (!connected) {
             Logger::warn(TAG, "Saved Wi-Fi credentials failed to connect; opening provisioning");
             enterProvisioningMode();
@@ -544,7 +564,8 @@ void setup() {
     }
 
     Logger::info(TAG, "Boot complete. Serial commands: STATUS, FACTORY_RESET, PROVISION, CAPTURE, "
-                 "OTACHECK <manifestUrl>, OTAUPDATE <manifestUrl>");
+                 "OTACHECK <manifestUrl>, OTAUPDATE <manifestUrl>, WIFILIST, "
+                 "WIFIADD <ssid> <password>, WIFIREMOVE <ssid>");
     Diagnostics::logSnapshot(TAG);
 }
 

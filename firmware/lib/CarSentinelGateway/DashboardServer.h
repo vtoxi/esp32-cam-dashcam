@@ -32,6 +32,16 @@ private:
     static void handleApiDevices();
     static void handleApiIncidents();
     static void handleStream();
+    // Settings (WiFi networks + SMTP) talk to NetworkConfig/EmailConfig directly
+    // rather than through callbacks — unlike the sensor-facing providers above, these
+    // are both already-shared config classes (same ones gateway_main.cpp itself calls
+    // directly), not device drivers this class needs to stay decoupled from.
+    static void handleSettingsPage();
+    static void handleApiWifiList();
+    static void handleApiWifiAdd();
+    static void handleApiWifiRemove();
+    static void handleApiEmailGet();
+    static void handleApiEmailSave();
 
     static JsonContentProvider statusProvider;
     static JsonContentProvider devicesProvider;

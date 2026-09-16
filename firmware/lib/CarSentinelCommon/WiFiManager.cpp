@@ -74,6 +74,51 @@ bool WiFiManager::connectBlocking(const NetworkConfigData& config) {
     return false;
 }
 
+bool WiFiManager::connectBestKnown() {
+    const NetworkConfigData& cfg = NetworkConfig::get();
+
+    // Candidate order: primary first (unchanged fast path when there's only one
+    // network, or it's still reachable), then saved networks not already tried.
+    struct Candidate { String ssid, password; };
+    Candidate candidates[1 + MAX_SAVED_NETWORKS];
+    uint8_t candidateCount = 0;
+    if (!cfg.ssid.isEmpty()) {
+        candidates[candidateCount++] = {cfg.ssid, cfg.password};
+    }
+    for (uint8_t i = 0; i < cfg.savedCount; i++) {
+        bool alreadyListed = false;
+        for (uint8_t j = 0; j < candidateCount; j++) {
+            if (candidates[j].ssid == cfg.saved[i].ssid) { alreadyListed = true; break; }
+        }
+        if (!alreadyListed) {
+            candidates[candidateCount++] = {cfg.saved[i].ssid, cfg.saved[i].password};
+        }
+    }
+
+    if (candidateCount == 0) {
+        Logger::info(TAG, "No saved networks at all; skipping connect attempt");
+        return false;
+    }
+
+    for (uint8_t i = 0; i < candidateCount; i++) {
+        NetworkConfigData attemptCfg = cfg;
+        attemptCfg.ssid = candidates[i].ssid;
+        attemptCfg.password = candidates[i].password;
+        Logger::info(TAG, "Trying known network " + String(i + 1) + "/" + String(candidateCount) +
+                     ": \"" + candidates[i].ssid + "\"");
+        if (connectBlocking(attemptCfg)) {
+            if (candidates[i].ssid != cfg.ssid) {
+                NetworkConfig::setPrimary(candidates[i].ssid, candidates[i].password);
+                Logger::info(TAG, "Promoted \"" + candidates[i].ssid + "\" to primary network");
+            }
+            return true;
+        }
+    }
+
+    Logger::warn(TAG, "All " + String(candidateCount) + " known network(s) failed to connect");
+    return false;
+}
+
 bool WiFiManager::isConnected() {
     return WiFi.status() == WL_CONNECTED;
 }

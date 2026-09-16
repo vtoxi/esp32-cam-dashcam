@@ -73,6 +73,7 @@ class CommitCallbacks : public NimBLECharacteristicCallbacks {
             net.password = pendingPassword;
         }
         NetworkConfig::save(net);
+        NetworkConfig::addNetwork(net.ssid, net.password);  // also remembered for connectBestKnown()
 
         DeviceConfigData dev = DeviceConfig::get();
         if (!pendingDisplayName.isEmpty()) {

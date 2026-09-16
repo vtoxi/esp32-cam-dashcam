@@ -1,7 +1,10 @@
 #include "DashboardServer.h"
 #include "Logger.h"
+#include "NetworkConfig.h"
+#include "EmailConfig.h"
 
 #include <WebServer.h>
+#include <ArduinoJson.h>
 
 namespace CarSentinel {
 
@@ -43,7 +46,7 @@ th{color:#8b949e;font-weight:600;font-size:0.8em;text-transform:uppercase;}
 .section h2{font-size:1em;color:#58a6ff;border-bottom:1px solid #30363d;padding-bottom:6px;}
 .empty{color:#8b949e;font-style:italic;padding:8px 0;}
 </style></head><body>
-<h1 id=title>CarSentinel Dashboard</h1>
+<h1 id=title>CarSentinel Dashboard <a href=/settings style="float:right;font-size:0.5em;color:#58a6ff;text-decoration:none;border:1px solid #30363d;border-radius:6px;padding:4px 10px;">&#9881; Settings</a></h1>
 <p class=sub>Live view, polling every 3s. Companion JSON API: <code>/api/status</code>, <code>/api/devices</code>, <code>/api/incidents</code>.</p>
 <div class=grid id=statusCards></div>
 <div class=section><h2>Live camera</h2><select id=cameraSelect onchange=selectCamera()><option value=''>Select a camera</option></select>
@@ -123,8 +126,171 @@ setInterval(poll, 3000);
 </script>
 </body></html>)HTML";
 
+// Settings page: WiFi networks (remembered list, add/remove — Section "multiple wifi
+// remember", both gateway and every node independently support the same
+// NetworkConfig::addNetwork()/removeNetwork() API, though only the gateway gets a web
+// UI for it this phase; nodes still expose it as WIFIADD/WIFIREMOVE serial commands)
+// and SMTP (reuses EmailConfig, same fields as the existing EMAILCONFIG serial
+// command). No CDN, same offline-first constraint as the main dashboard.
+static const char SETTINGS_HTML[] PROGMEM = R"HTML(<!DOCTYPE html><html><head><meta charset='UTF-8'>
+<meta name=viewport content='width=device-width,initial-scale=1'>
+<title>CarSentinel Settings</title>
+<style>
+:root{color-scheme:dark;}
+body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0d1117;color:#e6edf3;margin:0;padding:16px;max-width:520px;}
+h1{font-size:1.3em;color:#58a6ff;margin:0 0 4px;}
+a.back{color:#58a6ff;text-decoration:none;font-size:0.85em;}
+.section{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px 16px;margin:16px 0;}
+.section h2{font-size:1em;color:#58a6ff;margin-top:0;}
+label{display:block;font-size:0.8em;color:#8b949e;margin:8px 0 3px;}
+input,select{width:100%;box-sizing:border-box;padding:6px 8px;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:4px;}
+button{margin-top:12px;padding:7px 14px;background:#238636;color:#fff;border:none;border-radius:6px;cursor:pointer;}
+button.danger{background:#a12622;}
+ul{list-style:none;padding:0;margin:0;}
+li{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #30363d;}
+.msg{font-size:0.85em;color:#3fb950;min-height:1.2em;}
+</style></head><body>
+<a class=back href=/>&larr; Back to dashboard</a>
+<h1>Settings</h1>
+
+<div class=section><h2>Wi-Fi networks</h2>
+<p class=sub style="color:#8b949e;font-size:0.85em">Remembered networks, tried in order at boot — add a network without removing the current one.</p>
+<ul id=wifiList></ul>
+<label>SSID</label><input id=wifiSsid>
+<label>Password</label><input id=wifiPass type=password>
+<button onclick=addWifi()>Add / Update Network</button>
+<div class=msg id=wifiMsg></div>
+</div>
+
+<div class=section><h2>Email (SMTP) Alerts</h2>
+<label><input id=emailEnabled type=checkbox style="width:auto;display:inline-block"> Enabled</label>
+<label>SMTP Host</label><input id=emailHost>
+<label>SMTP Port</label><input id=emailPort type=number value=465>
+<label>Username</label><input id=emailUser>
+<label>Password (leave blank to keep current)</label><input id=emailPass type=password>
+<label>Sender address</label><input id=emailSender>
+<label>Recipient address</label><input id=emailRecipient>
+<button onclick=saveEmail()>Save Email Settings</button>
+<div class=msg id=emailMsg></div>
+</div>
+
+<script>
+function loadWifi(){
+  fetch('/api/settings/wifi').then(function(r){return r.json();}).then(function(list){
+    var ul=document.getElementById('wifiList');
+    if(!list.length){ ul.innerHTML='<li style="color:#8b949e;font-style:italic">No saved networks</li>'; return; }
+    ul.innerHTML=list.map(function(ssid){
+      return '<li><span>'+ssid+'</span><button class=danger onclick="removeWifi(\''+ssid.replace(/'/g,"\\'")+'\')">Remove</button></li>';
+    }).join('');
+  });
+}
+function addWifi(){
+  var ssid=document.getElementById('wifiSsid').value, pass=document.getElementById('wifiPass').value;
+  if(!ssid){ return; }
+  var body='ssid='+encodeURIComponent(ssid)+'&password='+encodeURIComponent(pass);
+  fetch('/api/settings/wifi/add',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body})
+    .then(function(r){return r.json();}).then(function(d){
+      document.getElementById('wifiMsg').textContent = d.ok ? 'Saved.' : 'Failed to save.';
+      document.getElementById('wifiSsid').value=''; document.getElementById('wifiPass').value='';
+      loadWifi();
+    });
+}
+function removeWifi(ssid){
+  fetch('/api/settings/wifi/remove',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'ssid='+encodeURIComponent(ssid)})
+    .then(function(){ loadWifi(); });
+}
+function loadEmail(){
+  fetch('/api/settings/email').then(function(r){return r.json();}).then(function(e){
+    document.getElementById('emailEnabled').checked=!!e.enabled;
+    document.getElementById('emailHost').value=e.smtpHost||'';
+    document.getElementById('emailPort').value=e.smtpPort||465;
+    document.getElementById('emailUser').value=e.username||'';
+    document.getElementById('emailSender').value=e.sender||'';
+    document.getElementById('emailRecipient').value=e.recipient||'';
+  });
+}
+function saveEmail(){
+  var params = new URLSearchParams();
+  params.set('enabled', document.getElementById('emailEnabled').checked ? '1':'0');
+  params.set('host', document.getElementById('emailHost').value);
+  params.set('port', document.getElementById('emailPort').value);
+  params.set('user', document.getElementById('emailUser').value);
+  params.set('password', document.getElementById('emailPass').value);
+  params.set('sender', document.getElementById('emailSender').value);
+  params.set('recipient', document.getElementById('emailRecipient').value);
+  fetch('/api/settings/email',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:params.toString()})
+    .then(function(r){return r.json();}).then(function(d){
+      document.getElementById('emailMsg').textContent = d.ok ? 'Saved.' : 'Failed to save.';
+      document.getElementById('emailPass').value='';
+    });
+}
+loadWifi();
+loadEmail();
+</script>
+</body></html>)HTML";
+
 void DashboardServer::handleRoot() {
     server.send_P(200, "text/html; charset=utf-8", DASHBOARD_HTML);
+}
+
+void DashboardServer::handleSettingsPage() {
+    server.send_P(200, "text/html; charset=utf-8", SETTINGS_HTML);
+}
+
+void DashboardServer::handleApiWifiList() {
+    const NetworkConfigData& net = NetworkConfig::get();
+    JsonDocument doc;
+    JsonArray arr = doc.to<JsonArray>();
+    for (uint8_t i = 0; i < net.savedCount; i++) {
+        arr.add(net.saved[i].ssid);
+    }
+    String out;
+    serializeJson(arr, out);
+    server.send(200, "application/json", out);
+}
+
+void DashboardServer::handleApiWifiAdd() {
+    String ssid = server.arg("ssid");
+    String password = server.arg("password");
+    bool ok = NetworkConfig::addNetwork(ssid, password);
+    server.send(200, "application/json", String("{\"ok\":") + (ok ? "true" : "false") + "}");
+}
+
+void DashboardServer::handleApiWifiRemove() {
+    bool ok = NetworkConfig::removeNetwork(server.arg("ssid"));
+    server.send(200, "application/json", String("{\"ok\":") + (ok ? "true" : "false") + "}");
+}
+
+// Password is never sent back to the browser (Section 41 posture, same as every other
+// credential in this project) — only whether one is already set.
+void DashboardServer::handleApiEmailGet() {
+    const EmailConfigData& e = EmailConfig::get();
+    JsonDocument doc;
+    doc["enabled"] = e.enabled;
+    doc["smtpHost"] = e.smtpHost;
+    doc["smtpPort"] = e.smtpPort;
+    doc["username"] = e.username;
+    doc["sender"] = e.sender;
+    doc["recipient"] = e.recipient;
+    doc["hasPassword"] = e.password.length() > 0;
+    String out;
+    serializeJson(doc, out);
+    server.send(200, "application/json", out);
+}
+
+void DashboardServer::handleApiEmailSave() {
+    EmailConfigData e = EmailConfig::get();
+    e.enabled = server.arg("enabled") == "1";
+    e.smtpHost = server.arg("host");
+    e.smtpPort = server.arg("port").toInt() > 0 ? server.arg("port").toInt() : e.smtpPort;
+    e.username = server.arg("user");
+    if (server.arg("password").length() > 0) {
+        e.password = server.arg("password");  // blank means "keep the current one"
+    }
+    e.sender = server.arg("sender");
+    e.recipient = server.arg("recipient");
+    bool ok = EmailConfig::save(e);
+    server.send(200, "application/json", String("{\"ok\":") + (ok ? "true" : "false") + "}");
 }
 
 void DashboardServer::handleApiStatus() {
@@ -163,6 +329,12 @@ void DashboardServer::begin(const String& deviceTitle, JsonContentProvider statu
     server.on("/api/devices", HTTP_GET, handleApiDevices);
     server.on("/api/incidents", HTTP_GET, handleApiIncidents);
     server.on("/stream", HTTP_GET, handleStream);
+    server.on("/settings", HTTP_GET, handleSettingsPage);
+    server.on("/api/settings/wifi", HTTP_GET, handleApiWifiList);
+    server.on("/api/settings/wifi/add", HTTP_POST, handleApiWifiAdd);
+    server.on("/api/settings/wifi/remove", HTTP_POST, handleApiWifiRemove);
+    server.on("/api/settings/email", HTTP_GET, handleApiEmailGet);
+    server.on("/api/settings/email", HTTP_POST, handleApiEmailSave);
     server.begin();
     active = true;
     Logger::info(TAG, "Dashboard active at http://<gateway-ip>/ (API: /api/status, /api/devices, /api/incidents)");

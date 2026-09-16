@@ -15,6 +15,18 @@ void NetworkConfig::migrate(int fromVersion) {
     if (fromVersion == NETWORK_SCHEMA_VERSION) {
         return;
     }
+    if (fromVersion == 1) {
+        // v1 had only a single ssid/password (still loaded into current.ssid/password
+        // by loadFromDisk() above, since those field names/positions didn't move) —
+        // fold it into the saved list so it survives as a remembered network too.
+        if (!current.ssid.isEmpty() && current.savedCount < MAX_SAVED_NETWORKS) {
+            current.saved[current.savedCount].ssid = current.ssid;
+            current.saved[current.savedCount].password = current.password;
+            current.savedCount++;
+        }
+        Logger::info(TAG, "Migrated network config v1 -> v2 (single SSID folded into saved list)");
+        return;
+    }
     Logger::warn(TAG, "Network config schemaVersion " + String(fromVersion) +
                  " has no defined migration path to " + String(NETWORK_SCHEMA_VERSION) +
                  "; using as-is.");
@@ -51,6 +63,15 @@ bool NetworkConfig::loadFromDisk() {
     current.connectTimeoutMs = doc["connectTimeoutMs"] | 15000;
     current.maxRetries = doc["maxRetries"] | 3;
     current.retryIntervalMs = doc["retryIntervalMs"] | 5000;
+
+    current.savedCount = 0;
+    JsonArray savedArr = doc["saved"].as<JsonArray>();
+    for (JsonObject o : savedArr) {
+        if (current.savedCount >= MAX_SAVED_NETWORKS) break;
+        current.saved[current.savedCount].ssid = o["ssid"] | "";
+        current.saved[current.savedCount].password = o["password"] | "";
+        current.savedCount++;
+    }
 
     if (storedVersion != NETWORK_SCHEMA_VERSION) {
         migrate(storedVersion);
@@ -100,6 +121,13 @@ bool NetworkConfig::save(const NetworkConfigData& data) {
     doc["maxRetries"] = current.maxRetries;
     doc["retryIntervalMs"] = current.retryIntervalMs;
 
+    JsonArray savedArr = doc["saved"].to<JsonArray>();
+    for (uint8_t i = 0; i < current.savedCount; i++) {
+        JsonObject o = savedArr.add<JsonObject>();
+        o["ssid"] = current.saved[i].ssid;
+        o["password"] = current.saved[i].password;
+    }
+
     File file = LittleFS.open(CONFIG_PATH, "w");
     if (!file) {
         Logger::error(TAG, "Failed to open " + String(CONFIG_PATH) + " for writing");
@@ -119,6 +147,62 @@ bool NetworkConfig::clearCredentials() {
     current.ssid = "";
     current.password = "";
     return save(current);
+}
+
+bool NetworkConfig::addNetwork(const String& ssid, const String& password) {
+    if (ssid.isEmpty()) {
+        return false;
+    }
+    NetworkConfigData next = current;
+    for (uint8_t i = 0; i < next.savedCount; i++) {
+        if (next.saved[i].ssid == ssid) {
+            next.saved[i].password = password;
+            Logger::info(TAG, "Updated saved network \"" + ssid + "\"");
+            return save(next);
+        }
+    }
+    if (next.savedCount >= MAX_SAVED_NETWORKS) {
+        // Evict the oldest (index 0) to make room — same "bounded, never grow
+        // forever" reasoning as IncidentCorrelator's retention cap.
+        for (uint8_t i = 1; i < next.savedCount; i++) {
+            next.saved[i - 1] = next.saved[i];
+        }
+        next.savedCount--;
+        Logger::warn(TAG, "Saved network list full; evicting oldest to add \"" + ssid + "\"");
+    }
+    next.saved[next.savedCount].ssid = ssid;
+    next.saved[next.savedCount].password = password;
+    next.savedCount++;
+    Logger::info(TAG, "Saved new network \"" + ssid + "\" (" + String(next.savedCount) + "/" +
+                 String(MAX_SAVED_NETWORKS) + ")");
+    return save(next);
+}
+
+bool NetworkConfig::removeNetwork(const String& ssid) {
+    NetworkConfigData next = current;
+    for (uint8_t i = 0; i < next.savedCount; i++) {
+        if (next.saved[i].ssid == ssid) {
+            for (uint8_t j = i + 1; j < next.savedCount; j++) {
+                next.saved[j - 1] = next.saved[j];
+            }
+            next.savedCount--;
+            Logger::info(TAG, "Removed saved network \"" + ssid + "\"");
+            return save(next);
+        }
+    }
+    return false;
+}
+
+bool NetworkConfig::setPrimary(const String& ssid, const String& password) {
+    if (ssid.isEmpty()) {
+        return false;
+    }
+    NetworkConfigData next = current;
+    next.ssid = ssid;
+    next.password = password;
+    bool ok = save(next);
+    addNetwork(ssid, password);  // also remember it, in case it wasn't already saved
+    return ok;
 }
 
 }  // namespace CarSentinel

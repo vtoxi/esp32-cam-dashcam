@@ -23,6 +23,16 @@ public:
     // no saved credentials (returns false immediately).
     static bool connectBlocking(const NetworkConfigData& config);
 
+    // Orchestrates connectBlocking() over multiple remembered networks ("multiple wifi
+    // remember" — Section 49-style config-over-hardcoding, applied to which network to
+    // use rather than which sensors exist): tries the current primary first, then each
+    // other saved network in order, stopping at the first success. On success to a
+    // non-primary network, persists it as the new primary via
+    // NetworkConfig::setPrimary() so the next boot's fast path (connectBlocking() alone)
+    // tries the right one first. Bounded — same as connectBlocking(), just repeated
+    // per candidate, so still never blocks forever.
+    static bool connectBestKnown();
+
     static bool isConnected();
     static WiFiConnState getState();
     static String localIP();

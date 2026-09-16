@@ -1,5 +1,6 @@
 using CarSentinel.Backend.Data;
 using CarSentinel.Backend.Endpoints;
+using CarSentinel.Backend.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 
@@ -17,6 +18,7 @@ builder.Services.AddAuthentication("DeviceCredential")
     .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions,
         CarSentinel.Backend.Auth.DeviceCredentialAuthenticationHandler>("DeviceCredential", null);
 builder.Services.AddAuthorization();
+builder.Services.AddSingleton<EventBroadcaster>();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
@@ -62,6 +64,7 @@ app.UseAuthorization();
 
 app.MapIngestEndpoints();
 app.MapQueryEndpoints();
+app.MapStreamEndpoints();
 
 app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
 

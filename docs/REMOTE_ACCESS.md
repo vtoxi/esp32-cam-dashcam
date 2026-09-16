@@ -87,19 +87,27 @@ with, so Phase 21.5's route design starts from real schemas, not guesses:
 
 ## 5. Real-time updates
 
-No WebSocket/SSE implementation exists on the Gateway today (`DashboardServer` is
-poll-only, 3s interval, Phase 19). The brief's flow —
+**Implemented (Phase 21.6), on the backend, not the Gateway** — matching the
+placement this section originally called for:
 
 ```text
-Camera motion -> ESP-NOW -> Gateway -> Backend -> WebSocket -> Browser
+Camera motion -> ESP-NOW -> Gateway -> Backend -> SSE -> Browser
 ```
 
-— places the WebSocket/SSE server on the **backend**, not the Gateway. The Gateway's
-job is only to get the event to the backend promptly via `RemoteSyncManager`'s
-"immediately" sync policy for `SECURITY_EVENTS`/`INCIDENTS` (Section 7,
-`docs/BACKEND.md`); fan-out to connected browsers is entirely a backend concern. This
-keeps the ESP32-S3 out of the business of managing WebSocket client connections at
-scale, consistent with Section 33's resource-constraint instruction.
+`GET /api/v1/stream` (Server-Sent Events, not WebSocket — one-directional is all this
+needs) pushes every ingested heartbeat/telemetry/event/incident to connected clients
+in real time via an in-memory `EventBroadcaster`. The Gateway's own job is unchanged
+from this section's original description: get the event to the backend promptly
+(`RemoteSyncManager`'s existing send path), fan-out to browsers is entirely the
+backend's concern. `DashboardServer` (the Gateway's own local dashboard) still polls
+every 3s — Phase 21.6 only added real-time push on the remote/backend side, the local
+LAN dashboard is unchanged and would need its own separate work to adopt SSE/
+WebSocket if that's ever wanted (not currently planned).
+
+Current limitation: single-process, in-memory pub/sub — fine for this reference
+backend, would need a shared broker (Redis, etc.) for a real multi-instance
+deployment (docs/BACKEND.md's "avoid unnecessary infrastructure until there's a
+second instance to justify it").
 
 ## 6. Webhooks
 

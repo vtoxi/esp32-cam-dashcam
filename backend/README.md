@@ -10,12 +10,13 @@ at all (`BackendConfig.enabled = false` is the default).
 
 ```
 cd backend/src/CarSentinel.Backend
-dotnet run
+dotnet run --urls "http://0.0.0.0:5299"
 ```
 
-Listens on the default ASP.NET Core dev ports (see console output); browse to `/` for
-the Swagger UI. A `carsentinel.db` SQLite file is created next to the project on first
-run.
+Pass `--urls` explicitly (rather than relying on `ASPNETCORE_URLS` or the default) —
+a `Properties/launchSettings.json` can silently override the port during `dotnet run`
+if one ever gets generated; explicit `--urls` always wins. Browse to `/` for the
+Swagger UI. A `carsentinel.db` SQLite file is created next to the project on first run.
 
 ## Point a gateway at it
 
@@ -40,11 +41,14 @@ assigns. See `RemoteSyncManager.cpp`'s `attemptRegistration()` for exactly what 
   model yet — see `docs/BACKEND.md`'s multi-tenant-readiness note).
 - Incidents are upserted by `incidentId`, not appended — one row holds the latest state
   as an incident moves through its lifecycle.
+- `GET /api/v1/stream` — Server-Sent Events, pushes every ingested heartbeat/telemetry/
+  event/incident in real time (`new EventSource('/api/v1/stream')` from a browser).
 
 ## What's not here yet (see `docs/IMPLEMENTATION_PLAN.md`'s Phase 21 entries)
 
 No EF migrations (schema changes mean deleting `carsentinel.db` and starting over — fine
 for this reference implementation, not for a real deployment), no user-facing
-authentication on the read API, no WebSocket/SSE real-time push (Phase 21.6), no
-evidence/image upload endpoint (Phase 21.7), no remote-command relay (Phase 21.8), no
-webhooks (Phase 21.9).
+authentication on the read API, no `device.offline` detection (only reacts to a
+heartbeat arriving after a gap, doesn't detect one that stops), no evidence/image
+upload endpoint (Phase 21.7), no remote-command relay (Phase 21.8), no webhooks
+(Phase 21.9).

@@ -4,6 +4,7 @@ using System.Text.Json;
 using CarSentinel.Backend.Auth;
 using CarSentinel.Backend.Data;
 using CarSentinel.Backend.Models;
+using CarSentinel.Backend.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace CarSentinel.Backend.Endpoints;
@@ -31,16 +32,29 @@ public static class IngestEndpoints
         // used to hijack an already-registered device's identity.
         group.MapPost("/register", RegisterAsync).AllowAnonymous();
 
-        group.MapPost("/heartbeat", async (HttpContext ctx, AppDbContext db, JsonElement payload) =>
+        group.MapPost("/heartbeat", async (HttpContext ctx, AppDbContext db, EventBroadcaster broadcaster, JsonElement payload) =>
         {
             var device = await RequireDeviceAsync(ctx, db);
             if (device is null) return Results.Unauthorized();
+            bool wasOffline = (DateTime.UtcNow - device.LastSeenAt).TotalSeconds > 120;
             device.LastSeenAt = DateTime.UtcNow;
             await db.SaveChangesAsync();
+            if (wasOffline)
+            {
+                // Section 15's device.online webhook/event trigger — the only
+                // online/offline transition this pass detects (a heartbeat arriving
+                // after a >120s gap, the same staleness window QueryEndpoints'
+                // /health uses). device.offline itself isn't detected here since
+                // nothing pushes an event when a heartbeat simply stops arriving —
+                // that needs a background sweep, not implemented this pass (see
+                // docs/IMPLEMENTATION_PLAN.md's Phase 21.6/21.9 entries).
+                broadcaster.Publish("device.online", device.Id, new { });
+            }
+            broadcaster.Publish("device.heartbeat", device.Id, new { });
             return Results.Ok(new { ok = true });
         }).RequireAuthorization();
 
-        group.MapPost("/telemetry", async (HttpContext ctx, AppDbContext db, JsonElement payload) =>
+        group.MapPost("/telemetry", async (HttpContext ctx, AppDbContext db, EventBroadcaster broadcaster, JsonElement payload) =>
         {
             var device = await RequireDeviceAsync(ctx, db);
             if (device is null) return Results.Unauthorized();
@@ -52,10 +66,11 @@ public static class IngestEndpoints
             });
             device.LastSeenAt = DateTime.UtcNow;
             await db.SaveChangesAsync();
+            broadcaster.Publish("telemetry", device.Id, payload);
             return Results.Ok(new { ok = true });
         }).RequireAuthorization();
 
-        group.MapPost("/events", async (HttpContext ctx, AppDbContext db, JsonElement payload) =>
+        group.MapPost("/events", async (HttpContext ctx, AppDbContext db, EventBroadcaster broadcaster, JsonElement payload) =>
         {
             var device = await RequireDeviceAsync(ctx, db);
             if (device is null) return Results.Unauthorized();
@@ -67,10 +82,11 @@ public static class IngestEndpoints
             });
             device.LastSeenAt = DateTime.UtcNow;
             await db.SaveChangesAsync();
+            broadcaster.Publish("motion.detected", device.Id, payload);
             return Results.Ok(new { ok = true });
         }).RequireAuthorization();
 
-        group.MapPost("/incidents", async (HttpContext ctx, AppDbContext db, JsonElement payload) =>
+        group.MapPost("/incidents", async (HttpContext ctx, AppDbContext db, EventBroadcaster broadcaster, JsonElement payload) =>
         {
             var device = await RequireDeviceAsync(ctx, db);
             if (device is null) return Results.Unauthorized();
@@ -88,6 +104,7 @@ public static class IngestEndpoints
 
             var existing = await db.Incidents.FindAsync(incidentId);
             var now = DateTime.UtcNow;
+            bool isNew = existing is null;
             if (existing is null)
             {
                 db.Incidents.Add(new IncidentRecord
@@ -108,6 +125,7 @@ public static class IngestEndpoints
             }
             device.LastSeenAt = now;
             await db.SaveChangesAsync();
+            broadcaster.Publish(isNew ? "incident.created" : "incident.updated", device.Id, payload);
             return Results.Ok(new { ok = true, incidentId });
         }).RequireAuthorization();
     }

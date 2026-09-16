@@ -27,6 +27,7 @@
 #include "DeviceRegistry.h"
 #include "MacAddress.h"
 #include "IncidentCorrelator.h"
+#include "StatusPage.h"
 
 #include <ArduinoJson.h>
 
@@ -354,6 +355,54 @@ static void handleSerialCommands() {
     }
 }
 
+// Minimal read-only status page content (see StatusPage.h) — mirrors the STATUS/DEVICES
+// serial commands' fields so they never drift into showing different things.
+static String buildStatusHtml() {
+    const DeviceConfigData& cfg = DeviceConfig::get();
+    const NetworkConfigData& net = NetworkConfig::get();
+    const CapabilitiesConfigData& caps = CapabilitiesConfig::get();
+    DiagnosticsSnapshot diag = Diagnostics::snapshot();
+
+    String html = "<table>";
+    html += "<tr><td class=k>Node ID</td><td>" + cfg.nodeId + "</td></tr>";
+    html += "<tr><td class=k>Display Name</td><td>" + cfg.displayName + "</td></tr>";
+    html += "<tr><td class=k>Hardware Profile</td><td>" + cfg.hardwareProfile + "</td></tr>";
+    html += "<tr><td class=k>Firmware</td><td>" + cfg.firmwareVersion + "</td></tr>";
+    html += "<tr><td class=k>MAC</td><td>" + DeviceIdentity::macAddress() + "</td></tr>";
+    html += "<tr><td class=k>Wi-Fi</td><td>" + net.ssid + " (" + WiFiManager::localIP() + ")</td></tr>";
+    html += "<tr><td class=k>Uptime</td><td>" + String(diag.uptimeMs / 1000) + "s</td></tr>";
+    html += "<tr><td class=k>Free Heap</td><td>" + String(diag.freeHeap) + " bytes</td></tr>";
+    html += "</table>";
+
+    html += "<table>";
+    if (caps.gps) {
+        html += "<tr><td class=k>GPS</td><td>" + GpsManager::toJson() + "</td></tr>";
+    }
+    if (caps.imu && ImuManager::isInitialized()) {
+        ImuReading r = ImuManager::read();
+        html += "<tr><td class=k>IMU accel</td><td>" + String(r.accelMagnitudeG, 2) + " g</td></tr>";
+        html += "<tr><td class=k>IMU gyro</td><td>" + String(r.gyroMagnitudeDps, 1) + " deg/s</td></tr>";
+    }
+    html += "</table>";
+
+    html += "<table>";
+    html += "<tr><td class=k>ESP-NOW</td><td>" + String(espNowActive ? "active" : "inactive") + "</td></tr>";
+    html += "<tr><td class=k>Peers seen</td><td>" + String(PeerRegistry::count()) + "</td></tr>";
+    html += "</table>";
+
+    html += "<p class=sub>Devices (Section 6 registry — auto-populated, zero-code):</p><table>";
+    html += "<tr><td class=k>Node</td><td class=k>Name</td><td class=k>Role</td><td class=k>Enabled</td><td class=k>Last seen</td></tr>";
+    for (uint8_t i = 0; i < DeviceRegistry::count(); i++) {
+        DeviceRegistryEntry* d = DeviceRegistry::get(i);
+        unsigned long agoS = d->lastSeenMs == 0 ? 0 : (millis() - d->lastSeenMs) / 1000;
+        html += "<tr><td>" + d->nodeId + "</td><td>" + d->displayName + "</td><td>" + d->role +
+                "</td><td>" + String(d->enabled ? "yes" : "no") + "</td><td>" + String(agoS) + "s ago</td></tr>";
+    }
+    html += "</table>";
+
+    return html;
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -412,6 +461,7 @@ void setup() {
     } else if (WiFiManager::isConnected()) {
         Logger::info(TAG, "NETWORK: connected, IP=" + WiFiManager::localIP() +
                      " ssid=" + NetworkConfig::get().ssid);
+        StatusPage::begin("CarSentinel Gateway " + cfg.nodeId, buildStatusHtml);
     } else {
         Logger::warn(TAG, "NETWORK: not connected (no IP) — Wi-Fi will keep retrying in the background");
     }
@@ -439,6 +489,12 @@ void loop() {
             EspNowManager::loop();
             IncidentCorrelator::loop();
         }
+        // Covers the case where Wi-Fi wasn't connected yet at boot (setup() only starts
+        // the page immediately on a successful connect) but WiFiManager reconnects later.
+        if (!StatusPage::isActive() && WiFiManager::isConnected()) {
+            StatusPage::begin("CarSentinel Gateway " + DeviceConfig::get().nodeId, buildStatusHtml);
+        }
+        StatusPage::loop();
     }
 
     unsigned long now = millis();

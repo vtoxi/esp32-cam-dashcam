@@ -593,4 +593,36 @@ Flash the gateway and bench-test Phases 8–9 together: confirm `STATUS` shows a
 resting accel magnitude (~1.0g) and near-zero gyro, then physically tap/shake the board
 to confirm an `IMPACT_EVENT` fires, opens an incident, and respects its cooldown.
 Combined with GPS, confirm the incident's location line shows real coordinates outdoors.
-Once that's solid, continue with Phase 10 (Driving / Parking Modes).
+
+## Out-of-sequence addition — minimal read-only status web page
+
+Not a numbered phase; requested directly (user: "does the gateway and node contain some
+UI when user hits their IP?"). Before this, hitting a device's IP over normal Wi-Fi got
+nothing — only the temporary provisioning AP at `192.168.4.1` served a web page, and it
+stops once Wi-Fi is configured. The real multi-page dashboard with config forms and
+device-management actions is still Phase 19 as originally planned; this is a much
+smaller, view-only addition on top of what already existed.
+
+**Implemented:**
+- `StatusPage` (shared, `lib/CarSentinelCommon`) — wraps a `WebServer` on port 80,
+  serves a single auto-refreshing (5s) HTML page at `/` built from a caller-provided
+  content function. Separate `WebServer` instance from `ProvisioningPortal`'s — safe
+  because a device is either in provisioning mode (AP) or normally connected (STA),
+  never both, so the two never actually run concurrently despite both binding port 80.
+- Both `node_main.cpp` and `gateway_main.cpp` now build a status HTML fragment
+  mirroring their existing `STATUS` serial command's fields exactly (identity, Wi-Fi,
+  capabilities/sensor readings, ESP-NOW state) — kept as one source of truth per field
+  rather than letting the web version and serial version drift apart. Gateway's page
+  also lists the live device registry (Section 6), the same data `DEVICES` prints.
+- Starts automatically once Wi-Fi actually connects (at boot, or later if
+  `WiFiManager` reconnects after starting in provisioning/disconnected).
+
+**Deliberately not included:** any configuration form, any action button, any
+authentication — this is read-only and unauthenticated, same trust model as the serial
+console (physical/network access to the device already implies that level of trust at
+this stage of the project; Section 41's broader security posture hasn't reached this
+surface yet). No page beyond `/` — no navigation, no per-sensor detail pages.
+
+**Build status: compiles clean, both environments, first attempt** (verified directly —
+node RAM 19.2%/Flash 42.5%). **Not yet bench-tested** — same as everything else since
+Phase 5, this has never been loaded onto a physical, Wi-Fi-connected board.

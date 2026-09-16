@@ -4,15 +4,18 @@ A modular, configuration-driven, distributed ESP32 vehicle dashcam, security, te
 and black-box platform — built for a Peugeot 2008 prototype install, designed to run on
 any vehicle.
 
-> **Status: Phase 9 — MPU6050.** Boot/identity/config (Phase 1), BLE+AP provisioning
-> (Phase 2), capability-gated hardware init (Phase 3), a working motion → confirm →
-> capture → local-evidence pipeline (Phase 4), node-to-gateway ESP-NOW communication
-> (Phase 5), a zero-code auto-populating gateway device registry with remote commands
-> (Phase 6), cross-camera correlation into one incident summary (Phase 7), real NEO-6M
-> NMEA parsing (Phase 8), and now MPU6050 accel/gyro reads with configurable,
-> never-claims-a-crash impact-threshold detection (Phase 9). **Compiles clean for both
-> targets.** The node has been flashed and is running on real hardware; the gateway has
-> not yet been flashed, and no IMU or GPS module has been bench-tested. See
+> **Status: Phase 9 — MPU6050**, plus an out-of-sequence minimal status web page.
+> Boot/identity/config (Phase 1), BLE+AP provisioning (Phase 2), capability-gated
+> hardware init (Phase 3), a working motion → confirm → capture → local-evidence
+> pipeline (Phase 4), node-to-gateway ESP-NOW communication (Phase 5), a zero-code
+> auto-populating gateway device registry with remote commands (Phase 6), cross-camera
+> correlation into one incident summary (Phase 7), real NEO-6M NMEA parsing (Phase 8),
+> MPU6050 accel/gyro reads with configurable, never-claims-a-crash impact-threshold
+> detection (Phase 9), and now a read-only auto-refreshing status page served at each
+> device's normal Wi-Fi IP (not Phase 19's full dashboard — just "hit the IP, see what's
+> going on"). **Compiles clean for both targets.** The node has been flashed and is
+> running on real hardware; the gateway has not yet been flashed, and nothing from
+> Phase 5 onward has been bench-tested. See
 > [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for full phase status and
 > known limitations.
 
@@ -89,6 +92,12 @@ Wi-Fi AP (`CarSentinel-Setup-<id>`) for provisioning. Connect to the AP and brow
 display name, and role; the device reboots into normal operation once submitted. Send
 `PROVISION` over serial at any time to clear saved Wi-Fi credentials and re-open
 provisioning without a full factory reset.
+
+Once a device successfully joins your Wi-Fi network, browse to its IP address (shown in
+the boot log as `NETWORK: connected, IP=...`, or via the `STATUS` serial command) for a
+read-only, auto-refreshing status page — identity, sensors, ESP-NOW state, and (on the
+gateway) the live device registry. This is a minimal view-only page, not the full
+configuration dashboard (that's a later phase).
 
 ## Adding / Removing / Replacing a Camera
 

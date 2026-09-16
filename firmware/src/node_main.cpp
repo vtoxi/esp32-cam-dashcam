@@ -28,6 +28,7 @@
 #include "EvidenceManager.h"
 #include "EspNowManager.h"
 #include "PeerRegistry.h"
+#include "StatusPage.h"
 
 #include <ArduinoJson.h>
 
@@ -336,6 +337,48 @@ static void handleSerialCommands() {
     }
 }
 
+// Minimal read-only status page content (see StatusPage.h) — mirrors the STATUS serial
+// command's fields so the two never drift into showing different things.
+static String buildStatusHtml() {
+    const DeviceConfigData& cfg = DeviceConfig::get();
+    const NetworkConfigData& net = NetworkConfig::get();
+    const CapabilitiesConfigData& caps = CapabilitiesConfig::get();
+    DiagnosticsSnapshot diag = Diagnostics::snapshot();
+
+    String html = "<table>";
+    html += "<tr><td class=k>Node ID</td><td>" + cfg.nodeId + "</td></tr>";
+    html += "<tr><td class=k>Display Name</td><td>" + cfg.displayName + "</td></tr>";
+    html += "<tr><td class=k>Role</td><td>" + String(roleToString(cfg.role)) + "</td></tr>";
+    html += "<tr><td class=k>Hardware Profile</td><td>" + cfg.hardwareProfile + "</td></tr>";
+    html += "<tr><td class=k>Firmware</td><td>" + cfg.firmwareVersion + "</td></tr>";
+    html += "<tr><td class=k>MAC</td><td>" + DeviceIdentity::macAddress() + "</td></tr>";
+    html += "<tr><td class=k>Wi-Fi</td><td>" + net.ssid + " (" + WiFiManager::localIP() + ")</td></tr>";
+    html += "<tr><td class=k>Uptime</td><td>" + String(diag.uptimeMs / 1000) + "s</td></tr>";
+    html += "<tr><td class=k>Free Heap</td><td>" + String(diag.freeHeap) + " bytes</td></tr>";
+    html += "</table>";
+
+    html += "<table>";
+    html += "<tr><td class=k>Camera</td><td>" + String(CameraManager::isInitialized() ? "initialized" : "off") + "</td></tr>";
+    html += "<tr><td class=k>SD</td><td>" + String(SdStorage::status().mounted ? "mounted" : "not mounted") + "</td></tr>";
+    html += "<tr><td class=k>Evidence storage</td><td>" + String(EvidenceManager::isAvailable() ? "available" : "unavailable") + "</td></tr>";
+    html += "<tr><td class=k>RCWL</td><td>" + String(caps.rcwl ? ("enabled, gpio=" + String(caps.rcwlGpio)) : "disabled") + "</td></tr>";
+    html += "<tr><td class=k>DHT</td><td>" + String(caps.dht
+        ? (lastDhtReading.valid ? String(lastDhtReading.temperatureC, 1) + "C / " + String(lastDhtReading.humidityPercent, 1) + "%"
+                                 : String("enabled, no reading yet"))
+        : String("disabled")) + "</td></tr>";
+    html += "</table>";
+
+    uint8_t gwMac[6];
+    bool haveGw = EspNowManager::findGatewayMac(gwMac);
+    html += "<table>";
+    html += "<tr><td class=k>ESP-NOW</td><td>" + String(espNowActive ? "active" : "inactive") + "</td></tr>";
+    html += "<tr><td class=k>Known peers</td><td>" + String(PeerRegistry::count()) + "</td></tr>";
+    html += "<tr><td class=k>Gateway discovered</td><td>" + String(haveGw ? "yes" : "no") + "</td></tr>";
+    html += "</table>";
+
+    return html;
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -396,6 +439,7 @@ void setup() {
     } else if (WiFiManager::isConnected()) {
         Logger::info(TAG, "NETWORK: connected, IP=" + WiFiManager::localIP() +
                      " ssid=" + NetworkConfig::get().ssid);
+        StatusPage::begin("CarSentinel Node " + cfg.nodeId, buildStatusHtml);
     } else {
         Logger::warn(TAG, "NETWORK: not connected (no IP) — Wi-Fi will keep retrying in the background");
     }
@@ -420,6 +464,12 @@ void loop() {
         if (espNowActive) {
             EspNowManager::loop();
         }
+        // Covers the case where Wi-Fi wasn't connected yet at boot (setup() only starts
+        // the page immediately on a successful connect) but WiFiManager reconnects later.
+        if (!StatusPage::isActive() && WiFiManager::isConnected()) {
+            StatusPage::begin("CarSentinel Node " + DeviceConfig::get().nodeId, buildStatusHtml);
+        }
+        StatusPage::loop();
     }
 
     // Security/capture pipeline runs unconditionally — independent of

@@ -29,7 +29,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 18 | Vehicle Integration | Compiles clean (both envs) — capability-gated ignition-sense input drives DRIVING/PARKED when wired; OBD-II/CAN blocked on hardware, not yet started |
 | 19 | Dashboard | Compiles clean (both envs) — gateway-hosted single-page dashboard + JSON API + live camera stream proxy; pending physical bench test |
 | 20 | Vehicle Installation | Planning checklist documented (`docs/wiring/VEHICLE_INSTALLATION.md`) — no firmware component, no physical install has happened |
-| 21 | Remote Backend, API & Hybrid Connectivity | 21.1 (Audit) + 21.2 (Backend Abstraction) + 21.3 (Persistent Remote Queue) complete, compiles clean, not yet bench-tested (no server to test against). 21.4 onward not started |
+| 21 | Remote Backend, API & Hybrid Connectivity | 21.1–21.4 complete (Audit, Backend Abstraction, Persistent Remote Queue, Device Registration & Authentication), compiles clean, not yet bench-tested (no server to test against). 21.5 (Backend Server) needs a technology decision from the user before proceeding |
 
 ## Phase 0 — Repository & Hardware Discovery
 
@@ -1460,12 +1460,49 @@ here).
 flash size (65.2%). **Not bench-tested** — same reason as Phase 21.2: no backend
 server exists yet to actually exercise retry/backoff against.
 
+## Phase 21.4 — Device Registration & Authentication (complete)
+
+**Implemented** (gateway-only): `RemoteBackend` gains `registerDevice(payload,
+outResponsePayload)` and `lastStatusCode()`; `HttpBackend` implements both (`POST
+/register`, response body captured via `HTTPClient::getString()`, status code tracked
+on every request). `RemoteSyncManager` attempts registration once per boot (retried on
+the same cadence as the heartbeat if it fails, never a tighter loop that would hammer
+a down server) — skipped entirely if `BackendConfig.deviceId` is already set (an
+operator-assigned ID is never overwritten). A successful registration response's
+`deviceId`/`credential` fields (if present) are persisted via `BackendConfig::save()`
+and applied to the live `HttpBackend` immediately, no reboot required. Registration
+payload carries `hardwareProfile`/`firmwareVersion`/`nodeId` from the existing
+`DeviceConfig` — no new identity fields invented for this.
+
+**`AUTH_FAILED` detection** (deferred from 21.2, now possible): any failed backend
+call is classified by `HttpBackend::lastStatusCode()` — HTTP 401/403 sets
+`AUTH_FAILED` instead of `RETRY_BACKOFF`, so `BACKENDSTATUS`/the dashboard can show
+"the credential is wrong" as a visibly different, more actionable state than "still
+trying."
+
+**Not implemented in this sub-phase**: no credential rotation/revocation flow (the
+brief's Section 11 requirement) — `BACKENDCONFIG`/the dashboard already let an
+operator manually replace a credential at any time, but there's no
+automatic-refresh-before-expiry mechanism, since there's no real backend yet to define
+what "expiry" even looks like. No secure hardware-backed credential storage (it's a
+plain field in `/config/backend.json`, same posture as every other credential in this
+project — `EmailConfig`'s SMTP password, `EspNowSecurity`'s key — documented, not
+hidden).
+
+**Build status: compiles clean, both environments.** Node build unaffected (all of
+this lives in `lib/CarSentinelGateway/`). **Not bench-tested** — no real `/register`
+endpoint exists anywhere to register against; the registration flow's JSON parsing and
+state transitions are build-verified only.
+
 ## Next Step
 
-Phase 21.4 (Device Registration & Authentication) — implement Gateway registration
-with the backend and ensure the credential (`BackendConfig.credential`) is handled
-securely; this is also where `AUTH_FAILED` detection (deferred from 21.2) becomes
-worth adding, once there's a real distinction between "wrong credential" and
-"server unreachable" to detect. Everything else in the project remains independent of
-Phase 21 and can still be bench-tested in the meantime — Phase 21 stays purely
-additive.
+Phase 21.5 (Backend Server) is the first sub-phase that needs an actual decision
+before any more Gateway-side code makes sense to write: what technology hosts the
+first reference backend. `docs/IMPLEMENTATION_PLAN.md`'s Phase 21 brief suggested
+ASP.NET Core as a reasonable default (the user is a .NET developer) but explicitly
+said not to assume it without asking — this is a real scope/technology decision for
+the user, not something to pick unilaterally the way firmware implementation details
+have been throughout this project. Sub-phases 21.6–21.11 (real-time API, evidence
+upload, remote commands, webhooks, API docs, end-to-end testing) all depend on 21.5
+existing first. Everything else in the project remains independent of Phase 21 and can
+still be bench-tested in the meantime — Phase 21 stays purely additive.

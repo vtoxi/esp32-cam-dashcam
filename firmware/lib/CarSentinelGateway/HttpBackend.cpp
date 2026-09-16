@@ -23,9 +23,10 @@ bool HttpBackend::isConnected() {
     return lastSuccessMs != 0 && (millis() - lastSuccessMs) < CONNECTED_STALENESS_MS;
 }
 
-bool HttpBackend::post(const String& path, const String& jsonPayload) {
+bool HttpBackend::post(const String& path, const String& jsonPayload, String* outResponsePayload) {
     if (baseUrl.isEmpty()) {
         Logger::warn(TAG, "post() called with no baseUrl configured — refusing");
+        lastHttpStatus = 0;
         return false;
     }
 
@@ -47,6 +48,7 @@ bool HttpBackend::post(const String& path, const String& jsonPayload) {
     }
     if (!began) {
         Logger::error(TAG, "Failed to begin HTTP request to " + url);
+        lastHttpStatus = 0;
         return false;
     }
 
@@ -59,6 +61,10 @@ bool HttpBackend::post(const String& path, const String& jsonPayload) {
     }
 
     int code = http.POST(jsonPayload);
+    lastHttpStatus = code;
+    if (outResponsePayload && code >= 200 && code < 300) {
+        *outResponsePayload = http.getString();
+    }
     http.end();
 
     if (code >= 200 && code < 300) {
@@ -67,6 +73,14 @@ bool HttpBackend::post(const String& path, const String& jsonPayload) {
     }
     Logger::warn(TAG, "POST " + path + " failed, HTTP " + String(code));
     return false;
+}
+
+bool HttpBackend::registerDevice(const String& jsonPayload, String& outResponsePayload) {
+    return post("/register", jsonPayload, &outResponsePayload);
+}
+
+int HttpBackend::lastStatusCode() {
+    return lastHttpStatus;
 }
 
 bool HttpBackend::sendHeartbeat(const String& jsonPayload) {

@@ -34,6 +34,23 @@ public:
     virtual bool sendTelemetry(const String& jsonPayload) = 0;
     virtual bool sendEvent(const String& jsonPayload) = 0;
     virtual bool sendIncident(const String& jsonPayload) = 0;
+
+    // Phase 21.4 — device registration/pairing (docs/BACKEND.md Section: "the Gateway
+    // should be able to operate locally before successful backend registration,"
+    // already true since RemoteSyncManager never calls this outside CONNECTING).
+    // jsonPayload carries whatever identifies this device (hardwareProfile,
+    // firmwareVersion, protocolVersion, its current deviceId if any); on success,
+    // outResponsePayload carries the raw server response body so the caller
+    // (RemoteSyncManager) can pull out a server-assigned deviceId/credential without
+    // this interface needing to know the exact response schema.
+    virtual bool registerDevice(const String& jsonPayload, String& outResponsePayload) = 0;
+
+    // The last HTTP-ish status code from any of the calls above — lets
+    // RemoteSyncManager distinguish "wrong credential" (its own state, AUTH_FAILED)
+    // from "server unreachable" (RETRY_BACKOFF), which was an explicitly deferred gap
+    // in Phase 21.2. 0 means "no request has completed yet" (not the same as a real
+    // failure code).
+    virtual int lastStatusCode() = 0;
 };
 
 }  // namespace CarSentinel

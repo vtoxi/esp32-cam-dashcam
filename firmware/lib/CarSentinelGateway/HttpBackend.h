@@ -20,6 +20,8 @@ public:
     bool sendTelemetry(const String& jsonPayload) override;
     bool sendEvent(const String& jsonPayload) override;
     bool sendIncident(const String& jsonPayload) override;
+    bool registerDevice(const String& jsonPayload, String& outResponsePayload) override;
+    int lastStatusCode() override;
 
 private:
     String baseUrl;
@@ -27,13 +29,17 @@ private:
     String credential;
     bool tlsVerify = false;
     unsigned long lastSuccessMs = 0;
+    int lastHttpStatus = 0;
     static const unsigned long CONNECTED_STALENESS_MS = 120000;  // 2x the default heartbeat interval
 
     // POSTs jsonPayload to baseUrl + path with the device credential as a Bearer
     // token. Bounded — HTTPClient's own default timeout applies, same as
-    // OtaManager's HTTP calls; never retried here (that's RemoteSyncManager's job,
-    // Phase 21.3).
-    bool post(const String& path, const String& jsonPayload);
+    // OtaManager's HTTP calls; retry/backoff is RemoteSyncManager/BackendQueue's job
+    // (Phase 21.3), not this class's. outResponsePayload, if non-null, receives the
+    // response body (used by registerDevice(); every other caller passes nullptr and
+    // ignores the body, since none of the send* methods need a response beyond
+    // success/failure).
+    bool post(const String& path, const String& jsonPayload, String* outResponsePayload = nullptr);
 };
 
 }  // namespace CarSentinel

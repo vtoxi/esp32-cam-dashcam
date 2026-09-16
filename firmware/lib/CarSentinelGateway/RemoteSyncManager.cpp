@@ -3,6 +3,7 @@
 #include "BackendConfig.h"
 #include "BackendQueue.h"
 #include "Logger.h"
+#include "DeviceConfig.h"
 
 #include <ArduinoJson.h>
 
@@ -10,10 +11,71 @@ namespace CarSentinel {
 
 static const char* TAG = "RemoteSyncManager";
 static HttpBackend httpBackendInstance;
+static bool registered = false;
+static unsigned long lastRegistrationAttemptMs = 0;
 
 RemoteBackend* RemoteSyncManager::backend = nullptr;
 BackendConnectionState RemoteSyncManager::state = BackendConnectionState::LOCAL_ONLY;
 unsigned long RemoteSyncManager::lastHeartbeatMs = 0;
+
+// AUTH_FAILED vs. RETRY_BACKOFF (Phase 21.4 — deferred from 21.2, now possible since
+// HttpBackend exposes the HTTP status code). 401/403 mean the credential itself is
+// wrong, not a transient network/server problem — worth a visibly different state so
+// BACKENDSTATUS/the dashboard don't just say "retrying" forever for a problem retrying
+// will never fix.
+static BackendConnectionState classifyFailure(RemoteBackend* backend) {
+    int code = backend->lastStatusCode();
+    if (code == 401 || code == 403) {
+        return BackendConnectionState::AUTH_FAILED;
+    }
+    return BackendConnectionState::RETRY_BACKOFF;
+}
+
+// Phase 21.4 — device registration. Called once per boot (or once per begin(), if
+// re-triggered by a config change) before the first heartbeat, only when no deviceId
+// is configured yet — an operator who already assigned a deviceId via the dashboard/
+// BACKENDCONFIG is treated as already registered, this never overwrites a
+// deliberately-set value. On success, whatever the server returns for deviceId/
+// credential is persisted via BackendConfig so it survives reboot. Never blocks
+// startup or local operation either way (docs/BACKEND.md Section 10's "operate
+// locally before successful registration" — already true, since this only runs from
+// loop(), never setup()).
+static void attemptRegistration(RemoteBackend* backend) {
+    const DeviceConfigData& dev = DeviceConfig::get();
+    JsonDocument doc;
+    doc["hardwareProfile"] = dev.hardwareProfile;
+    doc["firmwareVersion"] = dev.firmwareVersion;
+    doc["nodeId"] = dev.nodeId;
+    String payload;
+    serializeJson(doc, payload);
+
+    String responsePayload;
+    if (!backend->registerDevice(payload, responsePayload)) {
+        Logger::warn(TAG, "Backend registration failed (HTTP " + String(backend->lastStatusCode()) + ")");
+        return;
+    }
+
+    JsonDocument respDoc;
+    if (deserializeJson(respDoc, responsePayload) == DeserializationError::Ok) {
+        BackendConfigData cfg = BackendConfig::get();
+        bool changed = false;
+        if (respDoc["deviceId"].is<const char*>()) {
+            cfg.deviceId = respDoc["deviceId"].as<String>();
+            changed = true;
+        }
+        if (respDoc["credential"].is<const char*>()) {
+            cfg.credential = respDoc["credential"].as<String>();  // never logged
+            changed = true;
+        }
+        if (changed) {
+            BackendConfig::save(cfg);
+            backend->begin(cfg.baseUrl, cfg.deviceId, cfg.credential, cfg.tlsVerify);
+            Logger::info(TAG, "Backend registration assigned deviceId=" + cfg.deviceId);
+        }
+    }
+    registered = true;
+    Logger::info(TAG, "Backend registration complete");
+}
 
 const char* backendConnectionStateToString(BackendConnectionState state) {
     switch (state) {
@@ -53,12 +115,24 @@ void RemoteSyncManager::begin() {
     backend = &httpBackendInstance;
     backend->begin(cfg.baseUrl, cfg.deviceId, cfg.credential, cfg.tlsVerify);
     setState(BackendConnectionState::CONNECTING);
+    registered = !cfg.deviceId.isEmpty();  // an already-assigned deviceId counts as registered
     lastHeartbeatMs = 0;  // send a heartbeat on the very next loop(), not after a full interval
+    lastRegistrationAttemptMs = 0;  // attempt registration on the very next loop() too
 }
 
 void RemoteSyncManager::loop() {
     if (state == BackendConnectionState::LOCAL_ONLY || backend == nullptr) {
         return;
+    }
+
+    unsigned long nowForRegistration = millis();
+    if (!registered && nowForRegistration - lastRegistrationAttemptMs >= HEARTBEAT_INTERVAL_MS) {
+        lastRegistrationAttemptMs = nowForRegistration;
+        attemptRegistration(backend);
+        // Whether it succeeded or not, fall through to the heartbeat below — a failed
+        // attempt is naturally retried at the next interval since `registered` stays
+        // false, same cadence as the heartbeat rather than a tighter dedicated timer
+        // (no need to hammer a down server any faster than we'd check in on it anyway).
     }
 
     // Phase 21.3: give queued items (from earlier failed/offline sends) a chance to
@@ -78,17 +152,12 @@ void RemoteSyncManager::loop() {
     serializeJson(doc, payload);
 
     bool ok = backend->sendHeartbeat(payload);
-    // AUTH_FAILED is intentionally never entered yet — distinguishing "wrong
-    // credential" from "network/server unreachable" needs the backend to expose the
-    // HTTP status code, which RemoteBackend's interface doesn't yet (a deliberate
-    // scope cut for this sub-phase, not an oversight — see this file's header
-    // comment and docs/IMPLEMENTATION_PLAN.md's Phase 21.2 entry).
     // A missed heartbeat isn't queued — it's a liveness signal, not data; a stale one
     // delivered minutes late (once the backoff timer allows a retry) would carry a
     // wrong uptimeMs and add no value the *next* on-time heartbeat won't already
     // provide. Telemetry/events/incidents (below) are queued because losing those is
     // losing real data, not just a missed liveness check.
-    setState(ok ? BackendConnectionState::CONNECTED : BackendConnectionState::RETRY_BACKOFF);
+    setState(ok ? BackendConnectionState::CONNECTED : classifyFailure(backend));
 }
 
 BackendConnectionState RemoteSyncManager::getState() {

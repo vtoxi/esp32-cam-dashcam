@@ -1212,10 +1212,48 @@ touching Phase 2/5/6) is worth doing against the current code.
 
 ## Architecture Update — Hybrid ESP-NOW/Wi-Fi Networking
 
-**Planning-only update — no firmware was changed as part of this entry.** Full design:
-[docs/NETWORK.md](NETWORK.md), [docs/PROVISIONING.md](PROVISIONING.md),
+Full design: [docs/NETWORK.md](NETWORK.md), [docs/PROVISIONING.md](PROVISIONING.md),
 [docs/SECURITY.md](SECURITY.md), [docs/OTA.md](OTA.md), [docs/TESTING.md](TESTING.md).
-`docs/ARCHITECTURE.md` and `README.md` were also updated for consistency.
+`docs/ARCHITECTURE.md` and `README.md` were also updated for consistency. Originally
+landed as a planning-only entry; **implementation followed in two commits** (below) —
+this section now records both the original plan and what's actually been built.
+
+**Implemented:**
+1. **ESP-NOW starts unconditionally on every boot**, both roles — no longer gated
+   behind `!provisioningMode`. Closes gap item 1.
+2. **`NetworkConfig.wifiFallbackEnabled`** (schema v2→v3, default `true`) — when
+   `false`, a device never touches Wi-Fi at all: no `WiFi.begin()`, no AP-mode
+   provisioning, no credentials prompt. `WIFIFALLBACK ON|OFF` serial command (both
+   roles) + a toggle on the gateway dashboard's Settings page. Closes half of gap
+   item 5 (the toggle existing at all — `ProvisioningPortal`'s form still always shows
+   a Wi-Fi field with no in-flow skip option, so that half remains open).
+3. **`TransportManager`** (`lib/CarSentinelCommon/`, node-focused) — the real state
+   machine from `docs/NETWORK.md` Section 3 (`DISCONNECTED` / `ESPNOW_CONNECTING` /
+   `ESPNOW_CONNECTED` / `WIFI_FALLBACK_CONNECTING` / `WIFI_CONNECTED` /
+   `STANDALONE`), using `PeerRegistry`'s gateway-role peer heartbeat age against a new
+   configurable `espNowHeartbeatTimeoutMs` (schema v3→v4, also adds
+   `espNowDiscoveryTimeoutMs`/`espNowRetryIntervalMs`/`wifiFallbackDelayMs`). Exposes
+   `sendEvent()`/`sendTelemetry()`/`sendStatus()`/`sendCommand()`; node's
+   `MOTION_DETECTED` forward now goes through it instead of calling `EspNowManager`
+   directly. Closes most of gap item 2 — the low-level `Transport`/`EspNowTransport`
+   interface is unchanged, as planned.
+4. **`OfflineQueue`** — bounded (20), LittleFS-persisted, flushed automatically on
+   transition into `ESPNOW_CONNECTED`. Closes gap item 3.
+
+**Still open (unchanged from the original plan):**
+- **`WiFiTransport`/Wi-Fi-fallback message *delivery*.** The state machine correctly
+  tracks `WIFI_CONNECTED` (real Wi-Fi connectivity), but `TransportManager` has no
+  actual delivery path over it — no gateway-side HTTP ingestion endpoint exists, and a
+  node has no way to discover the gateway's Wi-Fi IP. An event that can't go over
+  ESP-NOW is queued (`OfflineQueue`), not delivered over Wi-Fi and not dropped. This is
+  gap item 2's remaining half.
+- **Gateway identity validation / formal pairing handshake** (gap item 4) — not
+  started. Zero-code auto-discovery (Phase 6) still means "the first device that
+  HELLOs claiming role GATEWAY, with a valid HMAC" is trusted as the gateway.
+- **`ProvisioningPortal`'s Wi-Fi field can't be skipped in-flow** (remaining half of
+  gap item 5) — a device can be configured ESP-NOW-only via `WIFIFALLBACK OFF`
+  afterward, but first-time provisioning doesn't yet ask "do you want Wi-Fi fallback?"
+  before showing the SSID field.
 
 **What changed:** the project's networking model is now explicitly ESP-NOW-primary /
 Wi-Fi-fallback / standalone-mandatory, with Wi-Fi credentials optional per device
@@ -1251,25 +1289,16 @@ Section 9 and `docs/PROVISIONING.md` Section 4 — summarized here for the plan 
    skip it for an ESP-NOW-only device, and `NetworkConfig` has no explicit "Wi-Fi
    fallback enabled" toggle distinct from "credentials happen to be saved."
 
-**Required new interfaces/classes** (design recorded in `docs/NETWORK.md` Section 5,
-not yet implemented): `TransportManager` (owns the `DISCONNECTED` /
-`ESPNOW_CONNECTING` / `ESPNOW_CONNECTED` / `WIFI_FALLBACK_CONNECTING` /
-`WIFI_CONNECTED` / `STANDALONE` state machine, exposes `sendEvent()`/`sendCommand()`/
-`sendTelemetry()`/`sendStatus()`/`requestConfiguration()`), `WiFiTransport`
-(gateway-reachable-over-IP, distinct from `WiFiManager`'s existing raw STA
-connect/reconnect job), an offline event queue, and a real pairing/gateway-validation
-step (likely tied into `docs/PROVISIONING.md`'s flow). `NetworkConfig`'s schema needs
-a `network.primaryTransport`/`fallbackTransport`/per-transport-config section
-(conceptual shape in `docs/NETWORK.md` Section 6 — not a final schema).
-
-**Explicitly not done as part of this update:** no code was written or changed; no new
-phase number was assigned (whether this becomes "Phase 21" or a rework folded into
-Phases 2/5/6 is an open decision for whoever scopes the implementation); the multi-WiFi
-list feature and Settings page built earlier in this session (`NetworkConfig::saved[]`,
-`connectBestKnown()`, the gateway dashboard's `/settings` page) are unaffected and
-remain in place — they solve "remember multiple Wi-Fi networks for the fallback path,"
-which is still exactly what's needed under this architecture, just no longer the
-*first* thing a node tries.
+**Still not implemented / open decisions:** `WiFiTransport` itself (Section above);
+`requestConfiguration()` was scoped out of `TransportManager`'s generic-ops set for now
+— no two-way gateway config-push API to route it through yet, and it wasn't needed by
+the one call site (`MOTION_DETECTED`) this pass actually rewired; no new phase number
+was assigned (whether this becomes "Phase 21" or a rework folded into Phases 2/5/6 is
+still an open decision). The multi-WiFi list feature and Settings page built earlier in
+this session (`NetworkConfig::saved[]`, `connectBestKnown()`, the gateway dashboard's
+`/settings` page) are unaffected and remain in place — they solve "remember multiple
+Wi-Fi networks for the fallback path," which is still exactly what's needed, just no
+longer the *first* thing a node tries.
 
 ## Next Step
 

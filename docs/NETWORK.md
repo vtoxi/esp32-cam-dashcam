@@ -118,11 +118,12 @@ normally:
   (already true today: `node_main.cpp`'s capture pipeline runs unconditionally in
   `loop()` regardless of `espNowActive`/Wi-Fi state — see Section 5 of the project
   spec, "node independence").
-- What's genuinely new: **events generated while standalone must be queued locally**
-  and delivered once the gateway becomes reachable again (over whichever transport
-  reconnects first), rather than simply being lost because
-  `EspNowManager::sendMessage()` had nothing to send to. This queue does not exist
-  yet — see Section 9's gap note.
+- **Events generated while standalone are queued locally** and delivered once the
+  gateway becomes reachable again, rather than being lost — implemented as
+  `OfflineQueue` (`lib/CarSentinelCommon/`), flushed automatically by
+  `TransportManager` on reconnect. Currently ESP-NOW-delivery only on flush (see
+  Section 9) — a queued event isn't yet attempted over Wi-Fi even if that's the
+  transport that reconnected first.
 
 No security functionality may be written to assume the gateway is reachable.
 
@@ -134,12 +135,14 @@ implemented by `EspNowTransport`) is a **low-level radio abstraction**: `sendTo(
 addressed by MAC, no concept of "gateway" or "fallback." That's correct for what it
 is and doesn't need to change.
 
-What this architecture adds is a **new, higher-level `TransportManager`** that sits
-above `EspNowManager` (which itself already wraps `Transport`/`EspNowTransport`) and a
-new `WiFiTransport` (gateway-reachable-over-IP, not a general Wi-Fi radio wrapper —
-`WiFiManager` already owns raw STA connect/reconnect and keeps doing that job).
-`TransportManager` is addressed by logical identity (gateway/node ID), not MAC or IP,
-and owns the state machine in Section 3:
+This architecture adds a **new, higher-level `TransportManager`**
+(`lib/CarSentinelCommon/TransportManager.h/.cpp` — implemented) that sits above
+`EspNowManager` (which itself already wraps `Transport`/`EspNowTransport`) and owns
+the state machine in Section 3. `WiFiTransport` (gateway-reachable-over-IP, not a
+general Wi-Fi radio wrapper — `WiFiManager` already owns raw STA connect/reconnect and
+keeps doing that job) is **not yet implemented** — `TransportManager` correctly tracks
+`WIFI_CONNECTED` state today, but has no gateway-side endpoint to actually deliver a
+message to over it yet (see Section 9).
 
 ```text
                      Application code
@@ -246,35 +249,36 @@ does — it's already the thing nodes fall back *to*.
 
 ## 9. Gap vs. current implementation
 
-Concrete, code-referenced differences between this document and what's actually
-running today (all of these are planning notes — nothing here has been implemented as
-part of this update):
+**Status: items 1–3 implemented** (two follow-up commits after this document was
+first written — see `docs/IMPLEMENTATION_PLAN.md`'s Architecture Update entry for
+exact commit-level detail). Items 4–5 and the Wi-Fi-delivery half of item 2 remain
+open.
 
-1. **ESP-NOW is gated behind Wi-Fi/provisioning, not the other way around.**
-   `node_main.cpp`'s `setup()`: if `NetworkConfig::hasCredentials()` is false, the node
-   calls `enterProvisioningMode()` and ESP-NOW is not started
-   (`if (!provisioningMode) { espNowActive = EspNowManager::begin(...); }`). Under this
-   architecture, ESP-NOW starts unconditionally and early; provisioning/Wi-Fi becomes
-   independent of it.
-2. **No `TransportManager` or `WiFiTransport` exist.** Application code
-   (`gateway_main.cpp`, `node_main.cpp`) calls `EspNowManager::sendMessage()` and
-   ESP-NOW-specific APIs directly; there's no generic `sendEvent()`/`sendCommand()`/
-   `sendTelemetry()`/`sendStatus()`/`requestConfiguration()` layer, and no transport
-   state machine — state is tracked via separate booleans (`espNowActive`,
-   `provisioningMode`) and `WiFiManager::isConnected()` checked ad hoc.
-3. **No offline event queue.** `EspNowManager`'s own header already documents this gap
-   (`"the persistent offline queue is Section 28 / Phase 28, out of scope here"`) — a
-   message sent while the gateway is unreachable over ESP-NOW is simply not delivered;
-   nothing queues it for later. Standalone mode's local capture/storage already works
-   (Section 4), but the *sync-when-reconnected* half doesn't exist yet.
-4. **No formal gateway discovery/pairing handshake.** What exists today
+1. ~~ESP-NOW is gated behind Wi-Fi/provisioning~~ **Fixed.** ESP-NOW now starts
+   unconditionally and early on both roles, independent of Wi-Fi/provisioning state.
+2. ~~No `TransportManager` exists~~ **Implemented** — the state machine (Section 3)
+   and generic `sendEvent()`/`sendTelemetry()`/`sendStatus()`/`sendCommand()` ops are
+   real, in `lib/CarSentinelCommon/TransportManager.h/.cpp`. **`WiFiTransport` remains
+   unimplemented** — no gateway-side HTTP ingestion endpoint and no way for a node to
+   discover the gateway's Wi-Fi IP yet, so Wi-Fi-fallback message delivery doesn't
+   actually happen even though the state machine correctly tracks `WIFI_CONNECTED`.
+   `requestConfiguration()` was also not implemented — no two-way gateway config-push
+   API to route it through, and no call site needed it yet.
+3. ~~No offline event queue~~ **Implemented** — `OfflineQueue`
+   (`lib/CarSentinelCommon/OfflineQueue.h/.cpp`), bounded, LittleFS-persisted, flushed
+   automatically by `TransportManager` on reconnect. ESP-NOW-delivery only on flush
+   (same Wi-Fi-transport gap as item 2).
+4. **No formal gateway discovery/pairing handshake.** Still open. What exists today
    (`EspNowManager`'s HELLO/HEARTBEAT + `DeviceRegistry::upsertFromDiscovery()`) is
    zero-code auto-discovery, not the identify → validate → authenticate → register →
    receive-configuration sequence Section 10 describes — see `docs/SECURITY.md` for
    the security-specific gaps in this same area.
-5. **README/ARCHITECTURE currently describe Wi-Fi as if every device needs it.**
-   Being corrected as part of this same doc update — see those files' current text vs.
-   this document.
+5. ~~README/ARCHITECTURE describe Wi-Fi as if every device needs it~~ **Fixed** as
+   part of this same doc update. `ProvisioningPortal`'s actual web form still always
+   shows a Wi-Fi SSID/password field with no in-flow way to skip it for an
+   ESP-NOW-only device — that part of `docs/PROVISIONING.md` Section 4 remains open (a
+   device can be switched to ESP-NOW-only after the fact via `WIFIFALLBACK OFF`, just
+   not opted out during first-time provisioning itself).
 
 None of these are contradictions to "fix silently" — each is called out here
 specifically so the implementation phase that closes this gap has a concrete,

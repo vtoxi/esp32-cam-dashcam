@@ -60,27 +60,26 @@ absent — see the gap note below, since that's exactly what happens today.
 
 ## 4. Gap vs. current implementation
 
-1. **Wi-Fi credentials are effectively mandatory today**, not opt-in.
-   `node_main.cpp`'s `setup()` unconditionally calls `enterProvisioningMode()` (which
-   starts both `ProvisioningPortal` and `BLEProvisioning`) whenever
-   `NetworkConfig::hasCredentials()` is false, and — per `docs/NETWORK.md`'s Section 9
-   gap note — ESP-NOW does not start until provisioning ends. There is no "Wi-Fi
-   fallback disabled, ESP-NOW only" path a device can settle into without ever seeing a
-   Wi-Fi credentials prompt.
-2. **`ProvisioningPortal`'s form always shows a Wi-Fi SSID/password field**
-   (`ProvisioningPortal.cpp`'s `handleRoot()`) with no way to skip it and proceed
-   ESP-NOW-only.
-3. **No explicit "Wi-Fi fallback enabled" toggle exists in `NetworkConfig`** — today
-   it's implicit (has credentials or doesn't). `docs/NETWORK.md` Section 6's config
-   model needs this as its own field, separate from "are any credentials currently
-   saved," so a device can have saved Wi-Fi networks (for fallback) while still
-   defaulting to ESP-NOW as primary and never blocking boot on Wi-Fi being reachable.
-4. **No explicit pairing/authentication step is triggered by provisioning** — a device
-   joins the mesh implicitly the first time its HELLO is heard and
+**Status: items 1 and 3 implemented; items 2 and 4 remain open** — see
+`docs/IMPLEMENTATION_PLAN.md`'s Architecture Update entry for exact commit-level
+detail.
+
+1. ~~Wi-Fi credentials are effectively mandatory today~~ **Fixed.** ESP-NOW now starts
+   unconditionally regardless of Wi-Fi/provisioning state, and `NetworkConfig`'s new
+   `wifiFallbackEnabled` flag (item 3) lets a device settle into "ESP-NOW only, never
+   prompted for Wi-Fi" — via `WIFIFALLBACK OFF` (serial, both roles, or the gateway
+   dashboard's Settings page).
+2. **`ProvisioningPortal`'s form still always shows a Wi-Fi SSID/password field**
+   (`ProvisioningPortal.cpp`'s `handleRoot()`), with no way to skip it *during
+   first-time provisioning itself* and proceed ESP-NOW-only. Still open — item 1's fix
+   means a device can be switched to ESP-NOW-only immediately *after* provisioning,
+   just not opted out of the Wi-Fi field within the provisioning form.
+3. ~~No explicit "Wi-Fi fallback enabled" toggle exists~~ **Implemented** —
+   `NetworkConfig.wifiFallbackEnabled` (schema v2→v3), its own field, independent of
+   whether credentials happen to be saved.
+4. **No explicit pairing/authentication step is triggered by provisioning.** Still
+   open — a device joins the mesh implicitly the first time its HELLO is heard and
    `DeviceRegistry::upsertFromDiscovery()` auto-creates an entry (Phase 6, "zero-code
    discovery"). That auto-discovery convenience is a real, intentional feature worth
    keeping for the common case — but per `docs/SECURITY.md`, it currently comes with no
    gateway identity validation, which a real pairing step (Section 3 above) would add.
-
-As with `docs/NETWORK.md`, this is a planning document — none of the above has been
-changed as part of this update.

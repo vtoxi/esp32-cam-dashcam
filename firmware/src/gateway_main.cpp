@@ -1,11 +1,14 @@
 // CarSentinel Gateway — Phase 1 (device foundation) + Phase 2 (BLE/Wi-Fi provisioning)
 // + Phase 3 (hardware capability layer) + Phase 5 (ESP-NOW) + Phase 6 (dynamic node
-// management) + Phase 7 (multi-camera correlation) + Phase 8 (GPS) + Phase 9 (MPU6050).
+// management) + Phase 7 (multi-camera correlation) + Phase 8 (GPS) + Phase 9 (MPU6050)
+// + Phase 10 (driving/parking modes) + Phase 11 (incident & evidence engine).
 //
 // Hardware capabilities (I2C buses for IMU/OLED, GPS UART) are initialized before
 // Wi-Fi/provisioning for the same reason as the node: they shouldn't depend on network
 // state. OLED page rendering is still Phase 13 — GPS (Phase 8) and IMU (Phase 9) are now
-// fully implemented, superseding Phase 3's presence-detection-only stubs.
+// fully implemented, superseding Phase 3's presence-detection-only stubs. Incidents
+// (Phase 11) persist to the gateway's own internal flash — see IncidentCorrelator.h for
+// why (the gateway has no SD card).
 
 #include <Arduino.h>
 #include "Logger.h"
@@ -31,6 +34,7 @@
 #include "SecurityModeConfig.h"
 
 #include <ArduinoJson.h>
+#include <LittleFS.h>
 
 using namespace CarSentinel;
 
@@ -53,10 +57,34 @@ static void onEspNowHeartbeat(const EspNowMessage& msg, const uint8_t mac[6]) {
     DeviceRegistry::updateHealth(msg.senderNodeId, doc["freeHeap"] | 0, doc["uptimeMs"] | 0);
 }
 
-// Phase 5/6/7 scope: log receipt, respect the registry's enabled flag, and correlate
-// multi-camera responses (Section 18) into a lightweight in-memory incident via
-// IncidentCorrelator. The full persistent incident lifecycle/evidence association
-// (Section 11) is Phase 11, built on top of this.
+// Section 24: whatever GPS/IMU context the gateway currently has, gathered fresh at the
+// moment an incident opens — this is what lets an incident record honestly claim GPS/
+// IMU association without IncidentCorrelator itself depending on either sensor driver.
+static IncidentTriggerInfo gatherAmbientInfo() {
+    IncidentTriggerInfo info;
+    const CapabilitiesConfigData& caps = CapabilitiesConfig::get();
+    if (caps.gps && GpsManager::hasFix()) {
+        GpsFix fix = GpsManager::getFix();
+        info.hasGps = true;
+        info.gpsLat = fix.latitude;
+        info.gpsLon = fix.longitude;
+        info.gpsSpeedKmph = fix.speedKmph;
+    }
+    if (caps.imu && ImuManager::isInitialized()) {
+        ImuReading r = ImuManager::read();
+        if (r.valid) {
+            info.hasImu = true;
+            info.imuAccelG = r.accelMagnitudeG;
+            info.imuGyroDps = r.gyroMagnitudeDps;
+        }
+    }
+    return info;
+}
+
+// Phase 5/6/7/11 scope: log receipt, respect the registry's enabled flag, and correlate
+// multi-camera responses (Section 18) into a persisted incident record (Section 11/24)
+// via IncidentCorrelator — full lifecycle, GPS/IMU/DHT association, evidence
+// references, survives reboot.
 static void onEspNowMessage(const EspNowMessage& msg, const uint8_t mac[6]) {
     DeviceRegistryEntry* dev = DeviceRegistry::find(msg.senderNodeId);
     if (dev && !dev->enabled) {
@@ -72,20 +100,27 @@ static void onEspNowMessage(const EspNowMessage& msg, const uint8_t mac[6]) {
         JsonDocument doc;
         if (deserializeJson(doc, msg.payload) == DeserializationError::Ok) {
             String eventId = doc["eventId"] | "unsaved";
-            String incidentId = IncidentCorrelator::startIncident(msg.senderNodeId, eventId);
-            // Section 21 "incident location": the gateway is the only node with GPS, so
-            // it's the natural place to attach a position to an incident. Logged
-            // alongside the incident, not yet persisted into it — Phase 11 owns the
-            // actual incident record this would get written into.
-            Logger::info(TAG, incidentId + " location: " + GpsManager::toJson());
+            IncidentTriggerInfo info = gatherAmbientInfo();
+            info.triggerType = "MOTION_DETECTED";
+            info.severity = doc["severity"] | "SUSPICIOUS";
+            info.hasImage = doc["hasImage"] | false;
+            if (!doc["temperatureC"].isNull()) {
+                info.hasEnv = true;
+                info.envTempC = doc["temperatureC"] | 0.0f;
+                info.envHumidity = doc["humidityPercent"] | 0.0f;
+            }
+            IncidentCorrelator::startIncident(msg.senderNodeId, eventId, info);
         }
     } else if (msg.type == EspNowMessageType::CAPTURE_RESULT) {
         JsonDocument doc;
         if (deserializeJson(doc, msg.payload) == DeserializationError::Ok) {
             String triggerNodeId = doc["triggerNodeId"] | "";
             String triggerEventId = doc["triggerEventId"] | "";
+            String localEventId = doc["localEventId"] | "";
+            bool hasImage = doc["hasImage"] | false;
             if (!triggerNodeId.isEmpty()) {
-                IncidentCorrelator::addRelated(triggerNodeId, triggerEventId, msg.senderNodeId);
+                IncidentCorrelator::addRelated(triggerNodeId, triggerEventId, msg.senderNodeId,
+                                                localEventId, hasImage);
             }
         }
     }
@@ -98,21 +133,40 @@ static uint32_t nextImuEventNumber = 1;
 // Section 23: the gateway is both the sensor source and the incident-opener here (no
 // ESP-NOW round trip needed — it's the gateway's own IMU), so this mirrors the
 // MOTION_DETECTED handling in onEspNowMessage() but triggers locally. Reports
-// IMPACT_EVENT with raw measurements; never claims a crash occurred.
+// IMPACT_EVENT with raw measurements; never claims a crash occurred. Also broadcasts a
+// CAPTURE_REQUEST (Section 18/24) so nearby cameras contribute footage of the impact
+// too, the same as a motion trigger does — a vehicle impact is exactly the kind of
+// event multi-camera evidence matters most for.
 static void reportImuImpact(const ImuReading& reading) {
     char idBuf[24];
     snprintf(idBuf, sizeof(idBuf), "IMU-%06u", (unsigned int)(nextImuEventNumber++));
     String eventId = String(idBuf);
     const DeviceConfigData& cfg = DeviceConfig::get();
 
-    String incidentId = IncidentCorrelator::startIncident(cfg.nodeId, eventId);
+    IncidentTriggerInfo info = gatherAmbientInfo();
+    info.triggerType = "IMPACT_EVENT";
+    info.severity = "SUSPICIOUS";
+    info.hasImage = false;  // the gateway itself has no camera
+    info.hasImu = true;     // override gatherAmbientInfo()'s snapshot with the actual triggering reading
+    info.imuAccelG = reading.accelMagnitudeG;
+    info.imuGyroDps = reading.gyroMagnitudeDps;
+
+    String incidentId = IncidentCorrelator::startIncident(cfg.nodeId, eventId, info);
     Logger::warn(TAG, incidentId + " IMPACT_EVENT " + eventId +
                  " accelMagnitudeG=" + String(reading.accelMagnitudeG, 2) +
                  " gyroMagnitudeDps=" + String(reading.gyroMagnitudeDps, 1) +
                  " raw accel(g)=[" + String(reading.accelXg, 2) + "," + String(reading.accelYg, 2) +
                  "," + String(reading.accelZg, 2) + "] gyro(dps)=[" + String(reading.gyroXdps, 1) +
                  "," + String(reading.gyroYdps, 1) + "," + String(reading.gyroZdps, 1) + "]");
-    Logger::info(TAG, incidentId + " location: " + GpsManager::toJson());
+
+    if (espNowActive) {
+        JsonDocument reqDoc;
+        reqDoc["triggerNodeId"] = cfg.nodeId;
+        reqDoc["triggerEventId"] = eventId;
+        String reqPayload;
+        serializeJson(reqDoc, reqPayload);
+        EspNowManager::sendMessage(EspNowMessageType::CAPTURE_REQUEST, reqPayload, nullptr);
+    }
 }
 
 static void enterProvisioningMode() {
@@ -396,6 +450,25 @@ static void handleSerialCommands() {
         // picks it up on the next sustained reading.
         SecurityModeConfig::setMode(SecurityModeConfig::getMode(), false);
         Logger::info(TAG, "Resumed automatic DRIVING/PARKED detection");
+    } else if (line == "INCIDENTS") {
+        // Section 11: lists every persisted incident record on the gateway's own flash
+        // (not SD — the gateway has none; see IncidentCorrelator.h). Direct LittleFS
+        // scan rather than a new IncidentCorrelator API, since this is read-only
+        // reporting the class itself doesn't need to own.
+        File dir = LittleFS.open("/incidents");
+        uint16_t count = 0;
+        if (dir && dir.isDirectory()) {
+            File entry = dir.openNextFile();
+            while (entry) {
+                String name = String(entry.name());
+                if (name.endsWith(".json")) {
+                    count++;
+                    Logger::info(TAG, "  " + name);
+                }
+                entry = dir.openNextFile();
+            }
+        }
+        Logger::info(TAG, "Persisted incidents: " + String(count));
     }
 }
 
@@ -516,7 +589,7 @@ void setup() {
     Logger::info(TAG, "Boot complete. Serial commands: STATUS, FACTORY_RESET, PROVISION, "
                  "DEVICES, RENAME <id> <name>, ENABLE <id>, DISABLE <id>, REMOVE <id>, "
                  "SETROLE <id> <role>, RESTART <id>, RESET <id>, IMUTHRESHOLDS <accelG> <gyroDps>, "
-                 "MODE, MODE <DISARMED|DRIVING|PARKED|SERVICE>, AUTOMODE");
+                 "MODE, MODE <DISARMED|DRIVING|PARKED|SERVICE>, AUTOMODE, INCIDENTS");
     Diagnostics::logSnapshot(TAG);
 }
 

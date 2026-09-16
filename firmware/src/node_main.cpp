@@ -1,12 +1,14 @@
 // CarSentinel generic Node — Phase 1 (device foundation) + Phase 2 (BLE/Wi-Fi
-// provisioning) + Phase 3 (hardware capability layer) + Phase 4 (single camera node).
+// provisioning) + Phase 3 (hardware capability layer) + Phase 4 (single camera node)
+// + Phase 5 (ESP-NOW) + Phase 6 (dynamic node management) + Phase 7 (multi-camera
+// correlation) + Phase 10 (driving/parking modes).
 //
 // Boot order: hardware capabilities (camera/SD/RCWL/DHT) initialize BEFORE
 // Wi-Fi/provisioning, and the motion→capture→evidence pipeline runs unconditionally in
-// loop() — regardless of provisioning/Wi-Fi state (Section 5 node independence). This
-// phase makes a single node a complete standalone security device: RCWL trigger (via
-// Phase 3's debounce-free raw read, now behind Phase 17's confirmation/cooldown state
-// machine) → JPEG snapshot → local evidence file (Section 27/55), no gateway required.
+// loop() — regardless of provisioning/Wi-Fi state (Section 5 node independence). RCWL
+// trigger (Section 17 debounce/confirmation) → mode check (Section 16 — only PARKED
+// alerts) → JPEG snapshot → local evidence file (Section 27/55) → ESP-NOW forward to
+// the gateway, which owns the actual incident record (Phase 11).
 
 #include <Arduino.h>
 #include "Logger.h"

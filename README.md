@@ -4,17 +4,18 @@ A modular, configuration-driven, distributed ESP32 vehicle dashcam, security, te
 and black-box platform — built for a Peugeot 2008 prototype install, designed to run on
 any vehicle.
 
-> **Status: Phase 10 — Driving / Parking Modes**, plus an out-of-sequence minimal status
-> web page. Boot/identity/config (Phase 1), BLE+AP provisioning (Phase 2),
+> **Status: Phase 11 — Incident & Evidence Engine**, plus an out-of-sequence minimal
+> status web page. Boot/identity/config (Phase 1), BLE+AP provisioning (Phase 2),
 > capability-gated hardware init (Phase 3), a working motion → confirm → capture →
 > local-evidence pipeline (Phase 4), node-to-gateway ESP-NOW communication (Phase 5), a
 > zero-code auto-populating gateway device registry with remote commands (Phase 6),
-> cross-camera correlation into one incident summary (Phase 7), real NEO-6M NMEA parsing
-> (Phase 8), MPU6050 accel/gyro reads with configurable, never-claims-a-crash
-> impact-threshold detection (Phase 9), a read-only status page at each device's IP, and
-> now `DISARMED`/`DRIVING`/`PARKED`/`SERVICE` security modes — auto-detected on the
-> gateway from GPS speed + IMU movement, broadcast to every node, gating motion alerting
-> (Phase 10). **Compiles clean for both targets.** The node has been flashed; two real
+> cross-camera correlation (Phase 7), real NEO-6M NMEA parsing (Phase 8), MPU6050
+> accel/gyro reads with configurable, never-claims-a-crash impact-threshold detection
+> (Phase 9), `DISARMED`/`DRIVING`/`PARKED`/`SERVICE` security modes auto-detected from
+> GPS/IMU (Phase 10), a read-only status page at each device's IP, and now real
+> persisted incident records on the gateway — full lifecycle, GPS/IMU/DHT association,
+> evidence references to each node's own SD-stored footage, and storage retention
+> (Phase 11). **Compiles clean for both targets.** The node has been flashed; two real
 > bugs found from its live boot log (a watchdog panic during Wi-Fi connect, and a
 > post-reboot camera reinit failure) are fixed but not yet reverified on hardware. The
 > gateway has not yet been flashed, and nothing from Phase 5 onward has been

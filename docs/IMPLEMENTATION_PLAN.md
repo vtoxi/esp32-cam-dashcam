@@ -19,7 +19,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 8 | GPS | Compiles clean (both envs) — pending physical GPS module bench test |
 | 9 | MPU6050 | Compiles clean (both envs) — pending physical IMU bench test |
 | 10 | Driving / Parking Modes | Compiles clean (both envs) — pending physical bench test |
-| 11 | Incident & Evidence Engine | Not started |
+| 11 | Incident & Evidence Engine | Compiles clean (both envs) — pending physical bench test |
 | 12 | Email Notification | Not started |
 | 13 | OLED Displays | Not started |
 | 14 | OTA | Not started |
@@ -722,4 +722,76 @@ Reflash the node with the watchdog/camera fixes above and confirm a clean boot w
 crash loop. Then flash the gateway and bench-test Phase 10: manually cycle through all
 four modes via `MODE`, confirm a node suppresses/allows motion alerts correctly per
 mode, and (outdoors, with GPS fix) confirm `AUTOMODE` correctly detects a real DRIVING
-transition. Once that's solid, continue with Phase 11 (Incident & Evidence Engine).
+transition.
+
+## Phase 11 — Incident & Evidence Engine
+
+**Implemented:**
+- `IncidentCorrelator` (gateway-only) grew from Phase 7's pure in-memory correlator
+  into a real incident engine: full Section 19 lifecycle (`DETECTED → ACTIVE →
+  EVIDENCE_COLLECTION → NOTIFICATION → CLOSED` — `CONFIRMING` exists in the enum for
+  schema completeness but isn't independently timed; by the time the gateway hears
+  about any trigger, the originating node/sensor has already finished its own
+  confirmation, so there's nothing left to wait for on the gateway side), GPS/IMU/DHT
+  association (Section 24), evidence references, and persistence.
+- **Where records live**: the gateway has no SD card (`docs/HARDWARE.md` — its hardware
+  profile has `sd=false`), so incident *records* (metadata, associations, evidence
+  references) persist to the gateway's own internal flash (LittleFS) under
+  `/incidents/<INCIDENT-NNNNNN>.json`. Actual JPEG evidence stays exactly where it
+  always has — on each contributing node's own SD card (`EvidenceManager`, Phase 4) —
+  referenced here by `(nodeId, localEventId)`, never copied onto the gateway. A
+  persisted counter (`/incidents/.next_incident_number`, same pattern as
+  `EvidenceManager`'s) keeps IDs unique across reboots.
+- `IncidentTriggerInfo` — deliberately keeps `IncidentCorrelator` sensor-agnostic (no
+  dependency on `GpsManager`/`ImuManager`). `gatherAmbientInfo()` in `gateway_main.cpp`
+  is the one place that actually reads GPS/IMU state, at the moment an incident opens.
+- Both incident-opening paths now build real association data instead of just logging
+  it alongside: `MOTION_DETECTED` (from a node) captures GPS position + speed, the
+  gateway's own current IMU reading as ambient context, and the DHT reading already
+  present in the node's payload (temperature/humidity — Phase 4's environment field,
+  now actually stored, not just logged). `IMPACT_EVENT` (Phase 9's local IMU trigger)
+  captures GPS + the actual triggering IMU reading (not just an ambient snapshot).
+- **New for this phase**: an IMU impact now also broadcasts `CAPTURE_REQUEST` (Section
+  18) so nearby cameras contribute footage of the impact, the same mechanism Phase 7
+  built for motion triggers — a vehicle impact is exactly the case multi-camera
+  evidence matters most for, and this was a one-line gap, not a new subsystem.
+- Storage retention (Section 27, applied to the gateway's own flash — there's no SD to
+  apply it to here): once persisted incidents exceed `MAX_STORED_INCIDENTS` (100), the
+  oldest is deleted on the next incident close.
+- New gateway serial command `INCIDENTS` lists every persisted incident file (parity
+  with `DEVICES`).
+
+**Not implemented (by design, later phases):** any actual notification action — the
+`NOTIFICATION` state is reached and logged ("would trigger email/alert pipeline here")
+but nothing sends anything; that's Phase 12 (Email) consuming this state, not this
+phase producing it. No dashboard/UI presentation of incident records beyond the raw
+`INCIDENTS` file listing (Phase 19). No cross-node time synchronization — incident
+`createdAtMs` is gateway uptime, not wall-clock (NTP is Phase 57, not yet reached).
+
+**Build status: compiles clean, both environments, first attempt** (verified directly —
+node RAM 19.2%/Flash 42.7%, unchanged from Phase 10 since this phase's changes are
+entirely gateway-side). **Not yet bench-tested** — nothing about persistence, retention,
+or the richer association data has touched a real filesystem yet.
+
+**Known limitations / risks to verify on hardware:**
+- `LittleFS` directory-listing behavior (`openNextFile()`) for `enforceRetention()` and
+  the new `INCIDENTS` command is standard Arduino-ESP32 API but hasn't been exercised
+  with real files on this project's actual flash yet.
+- A `CAPTURE_RESULT` that arrives after its incident already closed (Phase 7's existing
+  limitation) now also means that evidence reference is lost from the *persisted*
+  record too, not just the in-memory one — slightly higher stakes than before, same
+  underlying gap.
+- `gatherAmbientInfo()`'s IMU snapshot for a `MOTION_DETECTED`-triggered incident is
+  whatever the gateway's IMU reads *at that instant*, which could be a stale/default
+  reading if `ImuManager` hasn't been polled recently relative to when the event
+  arrived — worth checking real timing rather than assuming it's always fresh.
+
+## Next Step
+
+Flash the gateway and bench-test Phase 11 specifically: trigger a motion event, confirm
+an `/incidents/INCIDENT-*.json` file actually appears on the gateway's flash (readable
+via a small test sketch or a future OTA/file-access tool — there's no direct way to pull
+files off LittleFS remotely yet), confirm its GPS/IMU/env fields are populated
+correctly, and confirm `INCIDENTS` and retention behave as expected after enough events
+to exceed `MAX_STORED_INCIDENTS`. Once that's solid, continue with Phase 12 (Email
+Notification).

@@ -39,6 +39,8 @@
 #include "EmailConfig.h"
 #include "DisplayManager.h"
 #include "OtaManager.h"
+#include "BackendConfig.h"
+#include "RemoteSyncManager.h"
 
 #include <ArduinoJson.h>
 #include <LittleFS.h>
@@ -666,6 +668,41 @@ static void handleSerialCommands() {
         Logger::info(TAG, "Sending test email...");
         bool sent = NotificationManager::sendTest();
         Logger::info(TAG, sent ? "Test email sent" : "Test email failed — check EMAILCONFIG and serial log above");
+    } else if (line.startsWith("BACKENDCONFIG")) {
+        // Phase 21.2: remote backend settings, persisted, credential never logged —
+        // same posture as EMAILCONFIG's password above.
+        String tokens[4];
+        uint8_t n = splitTokens(line, tokens, 4);
+        if (n < 4) {
+            Logger::warn(TAG, "Usage: BACKENDCONFIG <LOCAL_ONLY|CAR_SENTINEL_CLOUD|CUSTOM_SERVER> "
+                         "<baseUrl> <deviceId> <credential>");
+        } else {
+            BackendConfigData cfg = BackendConfig::get();
+            cfg.mode = backendModeFromString(tokens[0]);
+            cfg.baseUrl = tokens[1];
+            cfg.deviceId = tokens[2];
+            cfg.credential = tokens[3];
+            cfg.enabled = cfg.mode != BackendMode::LOCAL_ONLY;
+            BackendConfig::save(cfg);
+            RemoteSyncManager::begin();
+            Logger::info(TAG, "Backend configured: mode=" + String(backendModeToString(cfg.mode)) +
+                         " baseUrl=" + cfg.baseUrl + " deviceId=" + cfg.deviceId +
+                         " (credential not logged)");
+        }
+    } else if (line == "BACKENDENABLE") {
+        BackendConfigData cfg = BackendConfig::get();
+        cfg.enabled = true;
+        BackendConfig::save(cfg);
+        RemoteSyncManager::begin();
+        Logger::info(TAG, "Backend sync enabled");
+    } else if (line == "BACKENDDISABLE") {
+        BackendConfigData cfg = BackendConfig::get();
+        cfg.enabled = false;
+        BackendConfig::save(cfg);
+        RemoteSyncManager::begin();
+        Logger::info(TAG, "Backend sync disabled — LOCAL_ONLY");
+    } else if (line == "BACKENDSTATUS") {
+        Logger::info(TAG, "Backend: " + String(backendConnectionStateToString(RemoteSyncManager::getState())));
     } else if (line == "WIFILIST") {
         const NetworkConfigData& net = NetworkConfig::get();
         Logger::info(TAG, "Saved Wi-Fi networks (" + String(net.savedCount) + "/" +
@@ -868,6 +905,12 @@ void setup() {
     NotificationManager::begin();
     IncidentCorrelator::setNotificationHandler(assistedIncidentNotify);
 
+    // Phase 21.2 — optional remote backend sync. BackendConfig defaults disabled
+    // (LOCAL_ONLY); RemoteSyncManager::begin() with that config is a no-op beyond
+    // logging, matching docs/BACKEND.md Section 6's local-first guarantee.
+    BackendConfig::begin();
+    RemoteSyncManager::begin();
+
     // docs/NETWORK.md: ESP-NOW is the primary transport and starts unconditionally,
     // regardless of Wi-Fi/provisioning state — this used to be gated behind
     // `!provisioningMode`, meaning a gateway with no saved Wi-Fi credentials never
@@ -923,7 +966,9 @@ void setup() {
                  "EMAILENABLE, EMAILDISABLE, TESTEMAIL, DISPLAYPAGES <0|1> <PAGE,...>, "
                  "DISPLAYINTERVAL <ms>, OTACHECK <manifestUrl>, OTAUPDATE <manifestUrl>, "
                  "WIFILIST, WIFIADD <ssid> <password>, WIFIREMOVE <ssid>, "
-                 "WIFIFALLBACK <ON|OFF> "
+                 "WIFIFALLBACK <ON|OFF>, "
+                 "BACKENDCONFIG <mode> <baseUrl> <deviceId> <credential>, "
+                 "BACKENDENABLE, BACKENDDISABLE, BACKENDSTATUS "
                  "(also available on the dashboard's Settings page)");
     Diagnostics::logSnapshot(TAG);
 }
@@ -952,6 +997,7 @@ void loop() {
                                     buildDevicesJson, buildIncidentsJson, streamCameraFromNode);
         }
         DashboardServer::loop();
+        RemoteSyncManager::loop();  // no-op cost when LOCAL_ONLY — see RemoteSyncManager.h
     }
 
     unsigned long now = millis();

@@ -2,6 +2,8 @@
 #include "Logger.h"
 #include "NetworkConfig.h"
 #include "EmailConfig.h"
+#include "BackendConfig.h"
+#include "RemoteSyncManager.h"
 
 #include <WebServer.h>
 #include <ArduinoJson.h>
@@ -180,6 +182,22 @@ li{display:flex;justify-content:space-between;align-items:center;padding:6px 0;b
 <div class=msg id=emailMsg></div>
 </div>
 
+<div class=section><h2>Remote Backend</h2>
+<p class=sub style="color:#8b949e;font-size:0.85em">Optional. Disabled by default (LOCAL_ONLY) — this gateway and every node work fully without it. See docs/BACKEND.md.</p>
+<label>Status: <span id=backendState>-</span></label>
+<label>Mode</label>
+<select id=backendMode>
+<option value=LOCAL_ONLY>Disabled (LOCAL_ONLY)</option>
+<option value=CAR_SENTINEL_CLOUD>CarSentinel Cloud</option>
+<option value=CUSTOM_SERVER>Custom Server</option>
+</select>
+<label>Base URL</label><input id=backendUrl placeholder="https://example.com/api/v1">
+<label>Device ID</label><input id=backendDeviceId>
+<label>Credential (leave blank to keep current)</label><input id=backendCredential type=password>
+<button onclick=saveBackend()>Save Backend Settings</button>
+<div class=msg id=backendMsg></div>
+</div>
+
 <script>
 function loadTransport(){
   fetch('/api/settings/transport').then(function(r){return r.json();}).then(function(t){
@@ -242,9 +260,31 @@ function saveEmail(){
       document.getElementById('emailPass').value='';
     });
 }
+function loadBackend(){
+  fetch('/api/settings/backend').then(function(r){return r.json();}).then(function(b){
+    document.getElementById('backendState').textContent = b.state;
+    document.getElementById('backendMode').value = b.mode;
+    document.getElementById('backendUrl').value = b.baseUrl||'';
+    document.getElementById('backendDeviceId').value = b.deviceId||'';
+  });
+}
+function saveBackend(){
+  var params = new URLSearchParams();
+  params.set('mode', document.getElementById('backendMode').value);
+  params.set('baseUrl', document.getElementById('backendUrl').value);
+  params.set('deviceId', document.getElementById('backendDeviceId').value);
+  params.set('credential', document.getElementById('backendCredential').value);
+  fetch('/api/settings/backend',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:params.toString()})
+    .then(function(r){return r.json();}).then(function(d){
+      document.getElementById('backendMsg').textContent = d.ok ? 'Saved.' : 'Failed to save.';
+      document.getElementById('backendCredential').value='';
+      loadBackend();
+    });
+}
 loadTransport();
 loadWifi();
 loadEmail();
+loadBackend();
 </script>
 </body></html>)HTML";
 
@@ -323,6 +363,35 @@ void DashboardServer::handleApiEmailSave() {
     server.send(200, "application/json", String("{\"ok\":") + (ok ? "true" : "false") + "}");
 }
 
+// Credential is never sent back to the browser — same posture as EmailConfig's
+// password above.
+void DashboardServer::handleApiBackendGet() {
+    const BackendConfigData& b = BackendConfig::get();
+    JsonDocument doc;
+    doc["mode"] = backendModeToString(b.mode);
+    doc["baseUrl"] = b.baseUrl;
+    doc["deviceId"] = b.deviceId;
+    doc["hasCredential"] = b.credential.length() > 0;
+    doc["state"] = backendConnectionStateToString(RemoteSyncManager::getState());
+    String out;
+    serializeJson(doc, out);
+    server.send(200, "application/json", out);
+}
+
+void DashboardServer::handleApiBackendSave() {
+    BackendConfigData b = BackendConfig::get();
+    b.mode = backendModeFromString(server.arg("mode"));
+    b.baseUrl = server.arg("baseUrl");
+    b.deviceId = server.arg("deviceId");
+    if (server.arg("credential").length() > 0) {
+        b.credential = server.arg("credential");  // blank means "keep the current one"
+    }
+    b.enabled = b.mode != BackendMode::LOCAL_ONLY;
+    bool ok = BackendConfig::save(b);
+    RemoteSyncManager::begin();  // apply immediately, no reboot required
+    server.send(200, "application/json", String("{\"ok\":") + (ok ? "true" : "false") + "}");
+}
+
 void DashboardServer::handleApiStatus() {
     String json = statusProvider ? statusProvider() : "{}";
     server.send(200, "application/json", json);
@@ -367,6 +436,8 @@ void DashboardServer::begin(const String& deviceTitle, JsonContentProvider statu
     server.on("/api/settings/wifi/remove", HTTP_POST, handleApiWifiRemove);
     server.on("/api/settings/email", HTTP_GET, handleApiEmailGet);
     server.on("/api/settings/email", HTTP_POST, handleApiEmailSave);
+    server.on("/api/settings/backend", HTTP_GET, handleApiBackendGet);
+    server.on("/api/settings/backend", HTTP_POST, handleApiBackendSave);
     server.begin();
     active = true;
     Logger::info(TAG, "Dashboard active at http://<gateway-ip>/ (API: /api/status, /api/devices, /api/incidents)");

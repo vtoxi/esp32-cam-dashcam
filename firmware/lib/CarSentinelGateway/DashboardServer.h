@@ -44,6 +44,8 @@ private:
     static void handleApiWifiRemove();
     static void handleApiEmailGet();
     static void handleApiEmailSave();
+    static void handleApiBackendGet();
+    static void handleApiBackendSave();
 
     static JsonContentProvider statusProvider;
     static JsonContentProvider devicesProvider;

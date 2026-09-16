@@ -32,6 +32,8 @@
 #include "IncidentCorrelator.h"
 #include "StatusPage.h"
 #include "SecurityModeConfig.h"
+#include "NotificationManager.h"
+#include "EmailConfig.h"
 
 #include <ArduinoJson.h>
 #include <LittleFS.h>
@@ -208,6 +210,30 @@ static void splitArgs(const String& line, String& arg1, String& arg2) {
     }
 }
 
+// Splits "COMMAND a b c ..." into up to maxTokens space-separated tokens after the
+// command word — used by EMAILCONFIG, which needs more fields than splitArgs handles.
+// No quoting support: none of these fields (SMTP host/port/username/sender/recipient)
+// are expected to contain spaces. A password containing a space isn't supported by
+// this command; documented, not silently mishandled.
+static uint8_t splitTokens(const String& line, String tokens[], uint8_t maxTokens) {
+    int firstSpace = line.indexOf(' ');
+    if (firstSpace < 0) return 0;
+    String rest = line.substring(firstSpace + 1);
+    rest.trim();
+    uint8_t count = 0;
+    while (rest.length() > 0 && count < maxTokens) {
+        int sp = rest.indexOf(' ');
+        if (sp < 0) {
+            tokens[count++] = rest;
+            break;
+        }
+        tokens[count++] = rest.substring(0, sp);
+        rest = rest.substring(sp + 1);
+        rest.trim();
+    }
+    return count;
+}
+
 // Sends a Section 6 administrative command to a node over ESP-NOW as a CONFIG_UPDATE
 // message ({"cmd":..., "value":...}) — the node applies it in its own onEspNowMessage
 // handler (see node_main.cpp). Requires the node to have been heard from at least once
@@ -349,6 +375,8 @@ static void handleSerialCommands() {
         }
         Logger::info(TAG, "securityMode=" + String(securityModeToString(SecurityModeConfig::getMode())) +
                      " manualOverride=" + String(SecurityModeConfig::isManualOverride()));
+        Logger::info(TAG, "email.enabled=" + String(EmailConfig::get().enabled) +
+                     " email.host=" + EmailConfig::get().smtpHost);
         Logger::info(TAG, "espnow.active=" + String(espNowActive) + " peers=" + String(PeerRegistry::count()));
         for (uint8_t i = 0; i < PeerRegistry::count(); i++) {
             PeerInfo* p = PeerRegistry::get(i);
@@ -470,6 +498,41 @@ static void handleSerialCommands() {
             }
         }
         Logger::info(TAG, "Persisted incidents: " + String(count));
+    } else if (line.startsWith("EMAILCONFIG")) {
+        // Section 29: SMTP settings, persisted, never logged (the password is written
+        // to /config/email_config.json but never echoed back in any log line).
+        String tokens[6];
+        uint8_t n = splitTokens(line, tokens, 6);
+        if (n < 6) {
+            Logger::warn(TAG, "Usage: EMAILCONFIG <smtpHost> <smtpPort> <username> <password> <sender> <recipient>");
+        } else {
+            EmailConfigData cfg = EmailConfig::get();
+            cfg.smtpHost = tokens[0];
+            cfg.smtpPort = (uint16_t)tokens[1].toInt();
+            cfg.username = tokens[2];
+            cfg.password = tokens[3];
+            cfg.sender = tokens[4];
+            cfg.recipient = tokens[5];
+            cfg.enabled = true;
+            EmailConfig::save(cfg);
+            Logger::info(TAG, "Email configured and enabled: host=" + cfg.smtpHost +
+                         ":" + String(cfg.smtpPort) + " sender=" + cfg.sender +
+                         " recipient=" + cfg.recipient + " (password not logged)");
+        }
+    } else if (line == "EMAILENABLE") {
+        EmailConfigData cfg = EmailConfig::get();
+        cfg.enabled = true;
+        EmailConfig::save(cfg);
+        Logger::info(TAG, "Email notifications enabled");
+    } else if (line == "EMAILDISABLE") {
+        EmailConfigData cfg = EmailConfig::get();
+        cfg.enabled = false;
+        EmailConfig::save(cfg);
+        Logger::info(TAG, "Email notifications disabled");
+    } else if (line == "TESTEMAIL") {
+        Logger::info(TAG, "Sending test email...");
+        bool sent = NotificationManager::sendTest();
+        Logger::info(TAG, sent ? "Test email sent" : "Test email failed — check EMAILCONFIG and serial log above");
     }
 }
 
@@ -506,6 +569,7 @@ static String buildStatusHtml() {
     html += "<table>";
     html += "<tr><td class=k>Security Mode</td><td>" + String(securityModeToString(SecurityModeConfig::getMode())) +
             (SecurityModeConfig::isManualOverride() ? " (manual)" : " (auto)") + "</td></tr>";
+    html += "<tr><td class=k>Email</td><td>" + String(EmailConfig::get().enabled ? "enabled" : "disabled") + "</td></tr>";
     html += "<tr><td class=k>ESP-NOW</td><td>" + String(espNowActive ? "active" : "inactive") + "</td></tr>";
     html += "<tr><td class=k>Peers seen</td><td>" + String(PeerRegistry::count()) + "</td></tr>";
     html += "</table>";
@@ -564,6 +628,8 @@ void setup() {
     DeviceRegistry::begin();
     IncidentCorrelator::begin();
     SecurityModeConfig::begin();
+    NotificationManager::begin();
+    IncidentCorrelator::setNotificationHandler(NotificationManager::onIncidentReady);
 
     if (!provisioningMode) {
         espNowActive = EspNowManager::begin(cfg.nodeId, roleToString(cfg.role));
@@ -590,7 +656,9 @@ void setup() {
     Logger::info(TAG, "Boot complete. Serial commands: STATUS, FACTORY_RESET, PROVISION, "
                  "DEVICES, RENAME <id> <name>, ENABLE <id>, DISABLE <id>, REMOVE <id>, "
                  "SETROLE <id> <role>, RESTART <id>, RESET <id>, IMUTHRESHOLDS <accelG> <gyroDps>, "
-                 "MODE, MODE <DISARMED|DRIVING|PARKED|SERVICE>, AUTOMODE, INCIDENTS");
+                 "MODE, MODE <DISARMED|DRIVING|PARKED|SERVICE>, AUTOMODE, INCIDENTS, "
+                 "EMAILCONFIG <host> <port> <user> <pass> <sender> <recipient>, "
+                 "EMAILENABLE, EMAILDISABLE, TESTEMAIL");
     Diagnostics::logSnapshot(TAG);
 }
 

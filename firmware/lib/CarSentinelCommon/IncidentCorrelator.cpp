@@ -12,6 +12,7 @@ static const char* COUNTER_PATH = "/incidents/.next_incident_number";
 
 IncidentRecord IncidentCorrelator::incidents[IncidentCorrelator::MAX_INCIDENTS];
 uint32_t IncidentCorrelator::nextIncidentNumber = 1;
+IncidentNotifyHandler IncidentCorrelator::notifyHandler = nullptr;
 
 const char* incidentStateToString(IncidentState state) {
     switch (state) {
@@ -250,8 +251,11 @@ void IncidentCorrelator::closeIncident(IncidentRecord& inc) {
 
     if (inc.evidenceCount > 0) {
         inc.state = IncidentState::NOTIFICATION;
-        Logger::info(TAG, inc.incidentId + " -> NOTIFICATION (would trigger email/alert "
-                     "pipeline here — Phase 12)");
+        if (notifyHandler) {
+            notifyHandler(inc);
+        } else {
+            Logger::info(TAG, inc.incidentId + " -> NOTIFICATION (no handler registered)");
+        }
     }
     inc.state = IncidentState::CLOSED;
     persist(inc);
@@ -267,6 +271,10 @@ void IncidentCorrelator::closeIncident(IncidentRecord& inc) {
 
     inc.active = false;
     enforceRetention();
+}
+
+void IncidentCorrelator::setNotificationHandler(IncidentNotifyHandler handler) {
+    notifyHandler = handler;
 }
 
 void IncidentCorrelator::loop() {

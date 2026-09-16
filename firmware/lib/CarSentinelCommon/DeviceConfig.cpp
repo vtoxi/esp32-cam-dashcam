@@ -77,16 +77,25 @@ bool DeviceConfig::loadFromDisk() {
     current.displayName = doc["displayName"] | "";
     current.role = roleFromString(doc["role"] | "UNASSIGNED");
     current.hardwareProfile = doc["hardwareProfile"] | "UNKNOWN";
-    current.firmwareVersion = doc["firmwareVersion"] | "";
+    String storedFirmwareVersion = doc["firmwareVersion"] | "";
+    current.firmwareVersion = CARSENTINEL_FIRMWARE_VERSION;
 
     if (current.nodeId.isEmpty()) {
         Logger::warn(TAG, "Loaded config has empty nodeId; treating as invalid");
         return false;
     }
 
+    bool firmwareVersionChanged = storedFirmwareVersion != current.firmwareVersion;
+    if (firmwareVersionChanged) {
+        Logger::info(TAG, "Firmware version changed on disk: " + storedFirmwareVersion +
+                     " -> " + current.firmwareVersion);
+    }
+
     if (storedVersion != CONFIG_SCHEMA_VERSION) {
         migrate(storedVersion);
         current.schemaVersion = CONFIG_SCHEMA_VERSION;
+        save(current);
+    } else if (firmwareVersionChanged) {
         save(current);
     }
 

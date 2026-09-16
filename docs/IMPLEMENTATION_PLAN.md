@@ -20,7 +20,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 9 | MPU6050 | Compiles clean — no MPU6050 wired yet on the tested gateway, not bench-tested |
 | 10 | Driving / Parking Modes | Confirmed `PARKED (auto)` reporting correctly on real hardware; mode transitions not yet tested |
 | 11 | Incident & Evidence Engine | Compiles clean (both envs) — pending physical bench test |
-| 12 | Email Notification | Not started |
+| 12 | Email Notification | Compiles clean (both envs) — pending real SMTP bench test |
 | 13 | OLED Displays | Not started |
 | 14 | OTA | Not started |
 | 15 | AI Framework | Not started |
@@ -839,5 +839,88 @@ files off LittleFS remotely yet), confirm its GPS/IMU/env fields are populated
 correctly, and confirm `INCIDENTS` and retention behave as expected after enough events
 to exceed `MAX_STORED_INCIDENTS`. Also reflash both devices with this update to confirm
 the mojibake and rename-sync fixes, and to get both devices onto a firmware version
-string that actually matches what's running. Once that's solid, continue with Phase 12
-(Email Notification).
+string that actually matches what's running.
+
+## Firmware version display bug — resolved (root cause found, not just worked around)
+
+Last session's open question (node reporting `0.4.0-phase4` while clearly running much
+newer code) is now explained and fixed: `DeviceConfig::loadFromDisk()` was reading
+`firmwareVersion` from the *persisted* `device.json` and keeping that value forever —
+once a config file existed, the field never refreshed to match whatever binary actually
+booted, no matter how many times the device was reflashed with different source. Not a
+stale-build guess after all; a real, deterministic bug. Fixed: `loadFromDisk()` now
+always sets `current.firmwareVersion` from the compile-time `CARSENTINEL_FIRMWARE_VERSION`
+constant, logs when it differs from what was stored, and re-persists so the file stays
+in sync too.
+
+## Phase 12 — Email Notification
+
+**Implemented:**
+- `NotificationProvider` — abstract interface (Section 30); `IncidentCorrelator` and
+  `NotificationManager` depend only on this, not on email specifically, so a future
+  provider (Telegram, webhook, push) is a new class, not a rewrite.
+- `EmailProvider` — a minimal SMTP client written directly over `WiFiClientSecure`
+  (implicit TLS, e.g. `smtp.gmail.com:465` with an app password) rather than a
+  third-party mail library. The EHLO/AUTH LOGIN/MAIL FROM/RCPT TO/DATA dialogue is a
+  short, stable, well-documented text protocol; every earlier phase that added a new
+  external library needed at least one guessed-API compile-fix pass, not worth that
+  risk here. `base64::encode()` and `WiFiClientSecure::connect()` were both confirmed
+  against this toolchain's actual installed headers before writing any of it.
+- **Documented, not hidden, security limitation**: TLS certificate validation is
+  currently disabled (`setInsecure()`), not pinned to a CA bundle. Accepts whatever
+  certificate the server presents. Fine for a first working version talking to a known
+  provider; not real certificate pinning (Section 41).
+- `EmailConfig` — persisted SMTP settings (host/port/username/password/sender/
+  recipient/cooldown) in their own file, same pattern as `NetworkConfig`/
+  `EspNowSecurity` — never logged, never mixed into a diagnostic dump of other config.
+- `NotificationManager` — the glue: registered as `IncidentCorrelator`'s notification
+  handler (called whenever an incident reaches the `NOTIFICATION` state), builds a
+  subject/body from the incident's full association data (GPS/IMU/env/evidence list),
+  and applies Section 29's cooldown — but **not** full aggregation. A notification
+  arriving within `cooldownSeconds` of the last one is simply suppressed and logged,
+  not queued or combined into one richer email; real Section 29 aggregation (batching
+  several events into one message) is a further step this phase doesn't take.
+- No image attachments — Section 29 lists them as optional, and the gateway has no
+  direct access to image bytes (they live on each node's own SD card, not the
+  gateway); implementing that would need an ESP-NOW file-transfer mechanism that
+  doesn't exist. Text-only email lists which nodes have images available and where.
+- New gateway serial commands: `EMAILCONFIG <host> <port> <user> <pass> <sender>
+  <recipient>` (also enables), `EMAILENABLE`, `EMAILDISABLE`, `TESTEMAIL` (sends
+  immediately, bypassing the cooldown, to verify configuration). `STATUS` and the
+  status page both show whether email is enabled (not the credentials).
+
+**Not implemented (by design):** real Section 29 aggregation (see above), image
+attachments (see above), any other notification channel (Section 30 lists Telegram/
+WhatsApp/push/webhook/Home Assistant as future work built on the same
+`NotificationProvider` interface — not this phase's job to build all of them).
+
+**Build status: compiles clean, both environments** (verified directly, one real bug
+caught and fixed along the way: `IncidentNotifyHandler`'s typedef referenced
+`IncidentRecord` before it was declared — reordered). **Not yet bench-tested against a
+real SMTP server** — nothing about the EHLO/AUTH/DATA dialogue has been exercised
+against real credentials or a real mail provider yet.
+
+**Known limitations / risks to verify on hardware:**
+- The disabled certificate validation, stated above, is worth revisiting before this
+  is anything more than a bench/development configuration.
+- `EMAILCONFIG`'s parser has no quoting support — none of host/port/username/sender/
+  recipient are expected to contain spaces, and a password containing one isn't
+  supported by this command (documented, not silently mishandled, but worth knowing
+  before choosing an app-password with spaces in it).
+- The SMTP response reader blocks for up to 10s per protocol step (`send()` is only ever
+  called from inside `loop()`, via `IncidentCorrelator::closeIncident()` →
+  `NotificationManager::onIncidentReady()`), so a slow/hung SMTP server **will** stall
+  the gateway's main loop for potentially several multiples of 10s during a real
+  notification attempt. Applying Phase 1/10's lesson directly: `readSmtpResponse()`'s
+  wait loop calls `Watchdog::feed()` every iteration, so this won't repeat the earlier
+  watchdog-panic bug — but the loop is still genuinely blocked for that duration (ESP-NOW,
+  GPS parsing, IMU polling, everything else in `loop()` pauses too), which is a real
+  responsiveness cost worth confirming is acceptable once tested against a real server.
+
+## Next Step
+
+Flash the gateway and bench-test Phases 11–12 together: trigger an incident, confirm an
+`/incidents/*.json` file appears with populated association data, configure real SMTP
+credentials via `EMAILCONFIG`, run `TESTEMAIL`, and confirm a real email arrives —
+watching specifically for whether the blocking SMTP call causes any watchdog issue on
+real hardware. Once that's solid, continue with Phase 13 (OLED Displays).

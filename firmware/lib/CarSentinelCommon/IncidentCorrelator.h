@@ -68,6 +68,12 @@ struct IncidentRecord {
     uint8_t evidenceCount = 0;
 };
 
+// Called once per incident that reaches NOTIFICATION (Phase 12 hooks NotificationManager
+// in here). Kept as a callback rather than a direct dependency so this class stays
+// decoupled from any specific notification mechanism — if no handler is registered, the
+// transition is simply logged and nothing else happens.
+typedef void (*IncidentNotifyHandler)(const IncidentRecord& incident);
+
 class IncidentCorrelator {
 public:
     static const uint8_t MAX_INCIDENTS = 4;  // concurrent open (in-memory) incidents
@@ -103,9 +109,12 @@ public:
     // enforces MAX_STORED_INCIDENTS.
     static void loop();
 
+    static void setNotificationHandler(IncidentNotifyHandler handler);
+
 private:
     static IncidentRecord incidents[MAX_INCIDENTS];
     static uint32_t nextIncidentNumber;
+    static IncidentNotifyHandler notifyHandler;
 
     static IncidentRecord* findOpen(const String& triggerNodeId, const String& triggerEventId);
     static void closeIncident(IncidentRecord& inc);

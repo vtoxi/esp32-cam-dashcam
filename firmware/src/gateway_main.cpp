@@ -32,7 +32,9 @@
 #include "IncidentCorrelator.h"
 #include "DashboardServer.h"
 #include "SecurityModeConfig.h"
+#include "PowerManager.h"
 #include "NotificationManager.h"
+#include "AIThreatFramework.h"
 #include "EmailConfig.h"
 #include "DisplayManager.h"
 #include "OtaManager.h"
@@ -164,6 +166,27 @@ static void onEspNowMessage(const EspNowMessage& msg, const uint8_t mac[6]) {
             }
         }
     }
+}
+
+// Phase 16 — AI Security Assistance: runs the (heuristic, honestly documented as such —
+// see AIThreatFramework.h) threat framework on every closed incident before deciding
+// whether to actually email about it. This is the "assistance" part: a LOW-confidence,
+// uncorroborated single motion blip no longer generates the same alert as a
+// multi-camera-confirmed event or a real impact — reduces notification noise without
+// silently dropping anything (still logged either way, and still visible on the
+// dashboard's incident list regardless of this decision).
+static void assistedIncidentNotify(const IncidentRecord& inc) {
+    ThreatAssessment assessment = AIThreatFramework::assess(inc.trigger, inc.evidenceCount);
+    Logger::info(TAG, "AI assessment for " + inc.incidentId + ": " +
+                 String(threatSeverityToString(assessment.severity)) + " (" +
+                 String(assessment.confidencePercent) + "% confidence) — " + assessment.reasoning);
+
+    if (assessment.severity == ThreatSeverity::THREAT_LOW) {
+        Logger::info(TAG, inc.incidentId + " assessed LOW — skipping email notification "
+                     "(still recorded and visible on the dashboard)");
+        return;
+    }
+    NotificationManager::onIncidentReady(inc);
 }
 
 static const uint8_t MPU6050_I2C_ADDR = 0x68;
@@ -317,6 +340,7 @@ static void applyModeChange(SecurityMode mode, bool manual) {
     SecurityModeConfig::setMode(mode, manual);
     Logger::warn(TAG, "Security mode -> " + String(securityModeToString(mode)) +
                  (manual ? " (manual)" : " (auto-detected: GPS speed / IMU movement — Section 44)"));
+    PowerManager::applyModeChange(mode);
     broadcastModeToAllDevices(mode);
 }
 
@@ -838,8 +862,9 @@ void setup() {
     DeviceRegistry::begin();
     IncidentCorrelator::begin();
     SecurityModeConfig::begin();
+    PowerManager::applyModeChange(SecurityModeConfig::getMode());
     NotificationManager::begin();
-    IncidentCorrelator::setNotificationHandler(NotificationManager::onIncidentReady);
+    IncidentCorrelator::setNotificationHandler(assistedIncidentNotify);
 
     if (!provisioningMode) {
         espNowActive = EspNowManager::begin(cfg.nodeId, roleToString(cfg.role));

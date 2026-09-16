@@ -32,6 +32,7 @@
 #include "PeerRegistry.h"
 #include "StatusPage.h"
 #include "SecurityModeConfig.h"
+#include "PowerManager.h"
 #include "OtaManager.h"
 
 #include <ArduinoJson.h>
@@ -202,6 +203,7 @@ static void onEspNowMessage(const EspNowMessage& msg, const uint8_t mac[6]) {
         // stored as false since a node never runs its own auto-detection loop to defer to.
         SecurityMode newMode = securityModeFromString(value);
         SecurityModeConfig::setMode(newMode, false);
+        PowerManager::applyModeChange(newMode);
         Logger::info(TAG, "Security mode set by gateway: " + String(securityModeToString(newMode)));
     } else if (cmd == "RESTART") {
         restartInto("remote RESTART command from gateway");
@@ -481,6 +483,7 @@ void setup() {
     OtaManager::confirmHealthyBoot();
 
     SecurityModeConfig::begin();
+    PowerManager::applyModeChange(SecurityModeConfig::getMode());
 
     // Hardware capabilities before Wi-Fi/provisioning: local sensing/capture must not
     // depend on network state (Section 5).

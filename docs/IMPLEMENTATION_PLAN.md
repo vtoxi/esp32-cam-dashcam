@@ -23,12 +23,12 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 12 | Email Notification | Compiles clean (both envs) — pending real SMTP bench test |
 | 13 | OLED Displays | Compiles clean (both envs) — pending physical OLED bench test |
 | 14 | OTA | Gateway: compiles clean, real MANUAL-mode HTTP(S) update flow. Node: scoped out — classic ESP32 IRAM budget can't fit it alongside camera/WiFi/BLE (real measured link failure, see below) |
-| 15 | AI Framework | Not started |
-| 16 | AI Security Assistance | Not started |
-| 17 | Low-Power Parked Mode | Not started |
-| 18 | Vehicle Integration | Not started |
+| 15 | AI Framework | Compiles clean (gateway) — pluggable heuristic threat-scoring framework; real on-device ML deliberately scoped out (see below) |
+| 16 | AI Security Assistance | Compiles clean (gateway) — heuristic analyzer gates email notification on assessed severity |
+| 17 | Low-Power Parked Mode | Compiles clean (both envs) — Wi-Fi modem sleep in PARKED mode only; full deep-sleep deliberately scoped out (see below) |
+| 18 | Vehicle Integration | Not started — hardware-dependent (ignition sense / OBD-II), no confirmed wiring to build against yet |
 | 19 | Dashboard | Compiles clean (both envs) — gateway-hosted single-page dashboard + JSON API + live camera stream proxy; pending physical bench test |
-| 20 | Vehicle Installation | Not started |
+| 20 | Vehicle Installation | Not applicable to firmware — physical install phase, tracked in docs/wiring/ only |
 
 ## Phase 0 — Repository & Hardware Discovery
 
@@ -1094,11 +1094,85 @@ library and node's own `StatusPage` build only gained the small `/stream` additi
 - Dashboard JSON payload sizes (especially `/api/incidents`) haven't been checked
   against the gateway's actual free heap under load with many devices/incidents.
 
+## Phase 15 — AI Framework
+
+**Implemented (gateway-only):** `AIThreatFramework` (`lib/CarSentinelGateway/`) — a
+pluggable analyzer slot (`ThreatAnalyzer` function pointer, swappable at runtime via
+`setAnalyzer()`) that turns an `IncidentTriggerInfo` + corroborating-node count into a
+`ThreatAssessment` (severity, confidence 0-100%, plain-English reasoning).
+
+**Deliberately not real ML — a scoping decision, not a shortcut:** this toolchain does
+ship esp-dl's face/human detection (`libhuman_face_detect.a`/`libcat_face_detect.a`,
+confirmed present), but Phase 14 already showed classic ESP32's IRAM budget is
+razor-thin even without a model loaded — adding real inference to a camera node would
+very likely reopen that exact link failure. The gateway has real headroom (ESP32-S3,
+8MB PSRAM), but nodes don't transmit full images to it today (evidence stays local to
+each node's SD card by design). So this phase ships the *framework* — a real,
+swappable interface — with a transparent heuristic as its only analyzer today, honestly
+documented as such rather than dressed up as more.
+
+**Build status: compiles clean** (gateway only; node build untouched since this lives
+in `lib/CarSentinelGateway/`).
+
+## Phase 16 — AI Security Assistance
+
+**Implemented:** `AIThreatFramework::heuristicAnalyzer()` — combines IMU impact
+magnitude vs. configured thresholds, GPS movement detected while the vehicle should be
+stationary (an incident only opens in PARKED mode — Section 16), and multi-camera
+corroboration (`IncidentRecord::evidenceCount`) into a score, then a severity band
+(LOW/SUSPICIOUS/HIGH — not named `LOW`/`HIGH` in code, since those collide with
+Arduino's `#define LOW 0x0`/`HIGH 0x1` pin-state macros, a real compile failure caught
+building this). `gateway_main.cpp`'s `assistedIncidentNotify()` replaces the direct
+`NotificationManager::onIncidentReady` registration: it runs the assessment on every
+closed incident, logs it, and **skips the email** for a LOW-confidence,
+uncorroborated single trigger — reducing notification noise without silently dropping
+anything (still persisted and visible on the Phase 19 dashboard's incident list either
+way).
+
+**Not implemented:** no per-user-configurable scoring weights (thresholds are the same
+`ImuThresholdsData`/GPS constants already used elsewhere); no historical learning
+(purely stateless per-incident).
+
+**Build status: compiles clean.** **Not yet bench-tested** — no real incident has been
+scored by this code on hardware yet.
+
+## Phase 17 — Low-Power Parked Mode
+
+**Implemented (both roles):** `PowerManager::applyModeChange(mode)` — toggles
+`WiFi.setSleep()` (modem sleep: radio duty-cycles between beacon intervals instead of
+staying fully receive-active) on whenever the current `SecurityMode` is `PARKED`, off
+for every other mode. Called once at boot with the current mode and again every time
+`SecurityModeConfig`'s mode actually changes (gateway's `applyModeChange()` /
+auto-detection loop; node's `SET_MODE` remote-command handler).
+
+**Deliberately not full deep-sleep — a real trade-off, not an oversight:** true
+ESP32 deep sleep between RCWL motion events was considered and rejected for this phase.
+It would tear down the Wi-Fi/ESP-NOW connection state that Phase 4/5's already-verified
+motion → capture → evidence pipeline depends on being immediately available, and
+re-establishing an ESP-NOW link from cold on every wake risks missing the very motion
+event this device exists to catch. Modem sleep keeps the connection alive (some
+latency added to packet delivery, not measured on hardware) while still reducing power
+draw during the long stretches a parked vehicle sits idle — the safer, smaller win.
+
+**Not implemented:** CPU frequency scaling (`setCpuFrequencyMhz()`) — considered, but
+skipped to avoid any risk to the camera capture/ESP-NOW timing paths already verified
+working on real hardware; a global CPU slowdown during PARKED would also slow down
+motion-triggered capture itself, which is the one time responsiveness matters most.
+
+**Build status: compiles clean, both environments** (node Flash 64.7%, +0.1% —
+negligible, `WiFi.h` was already linked).
+
+**Known limitations:** actual power draw reduction not yet measured on hardware; modem
+sleep's added ESP-NOW/motion-alert latency not yet measured either.
+
 ## Next Step
 
-Flash both the gateway and a node and bench-test Phases 13/14/19 together: confirm the
-OLED displays render, exercise `OTACHECK`/`OTAUPDATE` against a real manifest+image on
-the gateway (node OTA is out of scope per the limitation above), and open the
-dashboard at the gateway's IP to confirm the live device/incident data and camera
-stream proxy actually work end to end. Once that's solid, continue with Phase 15 (AI
-Framework).
+Flash both the gateway and a node and bench-test Phases 13/14/15/16/17/19 together:
+confirm the OLED displays render, exercise `OTACHECK`/`OTAUPDATE` on the gateway,
+trigger a real incident and confirm the AI assessment's severity/reasoning make sense
+and that a LOW-scored one is correctly skipped for email, measure actual current draw
+in PARKED vs. other modes, and open the dashboard to confirm live data end to end.
+Phase 18 (Vehicle Integration) and Phase 20 (Vehicle Installation) are physical
+install/wiring phases this project can't meaningfully advance further without the
+actual vehicle and OBD-II/ignition-sense wiring in hand — see docs/wiring/ for what's
+already documented; both remain open until that hardware work happens.

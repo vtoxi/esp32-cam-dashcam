@@ -26,7 +26,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 15 | AI Framework | Compiles clean (gateway) — pluggable heuristic threat-scoring framework; real on-device ML deliberately scoped out (see below) |
 | 16 | AI Security Assistance | Compiles clean (gateway) — heuristic analyzer gates email notification on assessed severity |
 | 17 | Low-Power Parked Mode | Compiles clean (both envs) — Wi-Fi modem sleep in PARKED mode only; full deep-sleep deliberately scoped out (see below) |
-| 18 | Vehicle Integration | Not started — hardware-dependent (ignition sense / OBD-II), no confirmed wiring to build against yet |
+| 18 | Vehicle Integration | Compiles clean (both envs) — capability-gated ignition-sense input drives DRIVING/PARKED when wired; OBD-II/CAN blocked on hardware, not yet started |
 | 19 | Dashboard | Compiles clean (both envs) — gateway-hosted single-page dashboard + JSON API + live camera stream proxy; pending physical bench test |
 | 20 | Vehicle Installation | Not applicable to firmware — physical install phase, tracked in docs/wiring/ only |
 
@@ -1165,14 +1165,39 @@ negligible, `WiFi.h` was already linked).
 **Known limitations:** actual power draw reduction not yet measured on hardware; modem
 sleep's added ESP-NOW/motion-alert latency not yet measured either.
 
+## Phase 18 — Vehicle Integration
+
+**Implemented (gateway; capability-gated, so also usable by a node if ever wired
+there):** `IgnitionSense` — reads a debounced digital ignition-sense line (a
+voltage-divider/optocoupler-stepped-down vehicle ignition-switched 12V signal, never a
+direct connection — see `CapabilitiesConfig.h`'s new `ignition`/`ignitionGpio` fields).
+When configured, the Section 44 auto-mode-detection loop uses it *instead of* the
+GPS-speed/IMU-movement heuristic (a wired ignition signal is unambiguous; GPS/IMU are
+inferring from noisy proxies) — ignition ON drives the same DRIVING transition, OFF
+drives PARKED, through the same existing hysteresis/streak logic. Off by default on
+every hardware profile (`GPIO_UNCONFIGURED`) until real vehicle wiring exists.
+
+**Not implemented — genuinely blocked on hardware, not a scope choice:** OBD-II/CAN
+bus integration (vehicle-specific PID knowledge and a confirmed physical harness are
+both prerequisites this project doesn't have yet); any other vehicle-bus signal
+(door/alarm state, speed from the vehicle itself rather than GPS). These remain
+tracked, not silently dropped from the spec — revisit once the Peugeot 2008's OBD-II
+port and pinout are actually characterized.
+
+**Build status: compiles clean, both environments** (node unaffected in practice —
+`IgnitionSense` is capability-gated off by default and adds negligible code even
+compiled in). **Not yet bench-tested** — no physical ignition-sense circuit has been
+wired or read from yet.
+
 ## Next Step
 
-Flash both the gateway and a node and bench-test Phases 13/14/15/16/17/19 together:
+Flash both the gateway and a node and bench-test Phases 13/14/15/16/17/18/19 together:
 confirm the OLED displays render, exercise `OTACHECK`/`OTAUPDATE` on the gateway,
 trigger a real incident and confirm the AI assessment's severity/reasoning make sense
 and that a LOW-scored one is correctly skipped for email, measure actual current draw
-in PARKED vs. other modes, and open the dashboard to confirm live data end to end.
-Phase 18 (Vehicle Integration) and Phase 20 (Vehicle Installation) are physical
-install/wiring phases this project can't meaningfully advance further without the
-actual vehicle and OBD-II/ignition-sense wiring in hand — see docs/wiring/ for what's
-already documented; both remain open until that hardware work happens.
+in PARKED vs. other modes, wire a real ignition-sense circuit and confirm
+DRIVING/PARKED tracks it correctly, and open the dashboard to confirm live data end to
+end. Phase 20 (Vehicle Installation) is a physical install phase with no firmware
+component of its own — it depends on all of the above being bench-verified first, and
+on the actual vehicle being available for the install; not applicable to further
+firmware work until then.

@@ -38,6 +38,16 @@ struct CapabilitiesConfigData {
     int display1SclGpio = GPIO_UNCONFIGURED;
     int display2SdaGpio = GPIO_UNCONFIGURED;   // second I2C bus — see docs/wiring/SSD1306.md
     int display2SclGpio = GPIO_UNCONFIGURED;
+
+    // Phase 18 — Vehicle Integration. A digital ignition-sense input (vehicle 12V
+    // ignition-switched line, stepped down through a voltage divider/optocoupler to
+    // 3.3V logic — never wired directly to a vehicle's 12V rail) that lets security
+    // mode react to the vehicle's actual ignition state instead of only inferring it
+    // from GPS speed/IMU movement (Section 44). Off by default on every hardware
+    // profile until real vehicle wiring is confirmed (Section 45/46) — disabled=false,
+    // gpio=GPIO_UNCONFIGURED means "not wired, fall back to GPS/IMU auto-detection".
+    bool ignition = false;
+    int ignitionGpio = GPIO_UNCONFIGURED;
 };
 
 class CapabilitiesConfig {

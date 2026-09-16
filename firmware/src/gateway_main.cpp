@@ -24,6 +24,7 @@
 #include "CapabilitiesConfig.h"
 #include "I2CBusManager.h"
 #include "GpsManager.h"
+#include "IgnitionSense.h"
 #include "ImuManager.h"
 #include "EspNowManager.h"
 #include "PeerRegistry.h"
@@ -467,6 +468,10 @@ static void initHardwareCapabilities() {
         GpsManager::begin(caps.gpsRxGpio, caps.gpsTxGpio);
     } else {
         Logger::info(TAG, "GPS capability disabled; skipping UART init");
+    }
+
+    if (caps.ignition && caps.ignitionGpio != GPIO_UNCONFIGURED) {
+        IgnitionSense::begin(caps.ignitionGpio);
     }
 }
 
@@ -964,13 +969,20 @@ void loop() {
     if (!SecurityModeConfig::isManualOverride() && now - lastModeCheck >= MODE_CHECK_INTERVAL_MS) {
         lastModeCheck = now;
         bool moving = false;
-        if (caps.gps && GpsManager::hasFix() && GpsManager::getFix().speedKmph > MOVEMENT_SPEED_KMPH) {
-            moving = true;
-        }
-        if (haveImuReading &&
-            (fabsf(lastImuReading.accelMagnitudeG - 1.0f) > MOVEMENT_ACCEL_DELTA_G ||
-             lastImuReading.gyroMagnitudeDps > MOVEMENT_GYRO_DPS)) {
-            moving = true;
+        // Phase 18: a wired ignition-sense line is a more reliable signal than
+        // inferring "moving" from GPS speed/IMU jostling — use it exclusively when
+        // configured rather than blending it with the heuristic below.
+        if (caps.ignition && IgnitionSense::isConfigured()) {
+            moving = IgnitionSense::isOn();
+        } else {
+            if (caps.gps && GpsManager::hasFix() && GpsManager::getFix().speedKmph > MOVEMENT_SPEED_KMPH) {
+                moving = true;
+            }
+            if (haveImuReading &&
+                (fabsf(lastImuReading.accelMagnitudeG - 1.0f) > MOVEMENT_ACCEL_DELTA_G ||
+                 lastImuReading.gyroMagnitudeDps > MOVEMENT_GYRO_DPS)) {
+                moving = true;
+            }
         }
         if (moving) { movingStreak++; stationaryStreak = 0; }
         else { stationaryStreak++; movingStreak = 0; }

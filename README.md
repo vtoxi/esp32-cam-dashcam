@@ -4,9 +4,9 @@ A modular, configuration-driven, distributed ESP32 vehicle dashcam, security, te
 and black-box platform — built for a Peugeot 2008 prototype install, designed to run on
 any vehicle.
 
-> **Status: Phases 0–17 and 19 implemented** (Phase 18 Vehicle Integration and Phase 20
-> Vehicle Installation are physical hardware/wiring phases, not yet started — see
-> below). Boot/identity/config (Phase 1), BLE+AP provisioning (Phase 2), capability-gated
+> **Status: Phases 0–19 implemented** (Phase 20 Vehicle Installation is a physical
+> install phase with no firmware component — see below). Boot/identity/config
+> (Phase 1), BLE+AP provisioning (Phase 2), capability-gated
 > hardware init (Phase 3), a working motion → confirm → capture → local-evidence
 > pipeline (Phase 4), node-to-gateway ESP-NOW communication (Phase 5), a zero-code
 > auto-populating gateway device registry with remote commands (Phase 6), cross-camera
@@ -20,13 +20,15 @@ any vehicle.
 > limitation, see below), a pluggable heuristic threat-scoring framework that gates
 > incident email alerts on assessed severity (Phases 15–16 — real on-device ML was
 > evaluated and scoped out, see docs), Wi-Fi modem sleep while parked (Phase 17 — full
-> deep-sleep deliberately scoped out to protect the verified motion-alert pipeline), and
-> a real gateway-hosted dashboard: live device/incident data, a JSON companion API, and
-> a live camera stream proxy (Phase 19). **Compiles clean for both targets, and both
-> the node and gateway have now been flashed and tested together on real hardware** —
+> deep-sleep deliberately scoped out to protect the verified motion-alert pipeline), a
+> capability-gated ignition-sense input that drives DRIVING/PARKED directly when wired
+> (Phase 18 — OBD-II/CAN blocked on not yet having a confirmed harness), and a real
+> gateway-hosted dashboard: live device/incident data, a JSON companion API, and a live
+> camera stream proxy (Phase 19). **Compiles clean for both targets, and both the node
+> and gateway have now been flashed and tested together on real hardware** —
 > zero-code device discovery (Phase 6) confirmed working end-to-end. Multi-camera
 > correlation (Phase 7), GPS fix acquisition, IMU, mode auto-transitions, and every
-> Phase 13–17/19 feature are still pending a physical bench test. Classic ESP32 camera
+> Phase 13–19 feature are still pending a physical bench test. Classic ESP32 camera
 > nodes cannot fit OTA's flash-write code within their fixed IRAM budget alongside
 > WiFi/BLE/camera — a real, measured link failure, not a guess — so OTA is gateway-only
 > this phase. See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for full

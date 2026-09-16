@@ -58,6 +58,8 @@ bool CapabilitiesConfig::loadFromDisk() {
     current.display1SclGpio = doc["display"]["display1SclGpio"] | GPIO_UNCONFIGURED;
     current.display2SdaGpio = doc["display"]["display2SdaGpio"] | GPIO_UNCONFIGURED;
     current.display2SclGpio = doc["display"]["display2SclGpio"] | GPIO_UNCONFIGURED;
+    current.ignition = doc["ignition"]["enabled"] | false;
+    current.ignitionGpio = doc["ignition"]["gpio"] | GPIO_UNCONFIGURED;
 
     if (storedVersion != CAPABILITIES_SCHEMA_VERSION) {
         migrate(storedVersion);
@@ -105,6 +107,8 @@ bool CapabilitiesConfig::save(const CapabilitiesConfigData& data) {
     doc["display"]["display1SclGpio"] = current.display1SclGpio;
     doc["display"]["display2SdaGpio"] = current.display2SdaGpio;
     doc["display"]["display2SclGpio"] = current.display2SclGpio;
+    doc["ignition"]["enabled"] = current.ignition;
+    doc["ignition"]["gpio"] = current.ignitionGpio;
 
     File file = LittleFS.open(CONFIG_PATH, "w");
     if (!file) {

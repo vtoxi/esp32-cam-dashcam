@@ -28,11 +28,16 @@ any vehicle.
 >   unreachable is queued, not lost. Full design and exactly what's implemented vs.
 >   still open: [docs/NETWORK.md](docs/NETWORK.md).
 > - **Phase 21 (Remote Backend, API & Hybrid Connectivity)** — optional, off by
->   default, never a dependency for anything above: 21.1 (architecture audit) and
->   21.2 (backend abstraction — `RemoteSyncManager`/`RemoteBackend`/`HttpBackend`,
->   configurable via the dashboard's Settings page or `BACKENDCONFIG`) are done and
->   compile clean; there is no backend server yet to actually sync with. See
->   [docs/BACKEND.md](docs/BACKEND.md) and [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md).
+>   default, never a dependency for anything above. Gateway-side abstraction
+>   (`RemoteSyncManager`/`RemoteBackend`/`HttpBackend`/`BackendQueue`, device
+>   registration + auth, configurable via the dashboard's Settings page or
+>   `BACKENDCONFIG`) is done and compiles clean. A real reference backend now exists
+>   too — [`backend/`](backend/), ASP.NET Core 8, manually verified end-to-end
+>   (register/heartbeat/telemetry/incident-upsert/query/auth-rejection all confirmed
+>   working against a running instance) — though the Gateway↔Backend integration
+>   itself (real firmware talking to this server) is still unverified. See
+>   [docs/BACKEND.md](docs/BACKEND.md), [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md),
+>   and [backend/README.md](backend/README.md) for how to run it.
 > - Classic ESP32 camera nodes cannot fit OTA's flash-write code within their fixed
 >   IRAM budget alongside WiFi/BLE/camera — a real, measured link failure, not a
 >   guess — so OTA is gateway-only.
@@ -182,14 +187,19 @@ real measured link failure documented in `docs/IMPLEMENTATION_PLAN.md` Phase 14 
 
 ## Remote Backend (optional, Phase 21)
 
-The gateway can optionally sync to a remote backend (your own server, or a future
-CarSentinel cloud) over HTTPS — off by default (`LOCAL_ONLY`), and never a dependency
-for anything else in this project: every local feature above works identically with
-it disabled. Configure via the dashboard's Settings page or `BACKENDCONFIG <mode>
-<baseUrl> <deviceId> <credential>` over serial. Only the abstraction layer
-(`RemoteSyncManager`/`HttpBackend`) exists so far — there's no backend server to sync
-with yet, and no retry/persisted queue for backend traffic (dropped on failure, not
-queued — unlike the Node↔Gateway `OfflineQueue`). See
+The gateway can optionally sync to a remote backend over HTTPS — off by default
+(`LOCAL_ONLY`), and never a dependency for anything else in this project: every local
+feature above works identically with it disabled. Configure via the dashboard's
+Settings page or `BACKENDCONFIG <mode> <baseUrl> <deviceId> <credential>` over serial.
+
+A real reference backend exists at [`backend/`](backend/) — ASP.NET Core 8 + SQLite,
+device registration with per-device credentials (SHA-256 hashed, never a shared global
+key), telemetry/event/incident ingestion (incidents upserted by ID, not appended),
+Swagger UI, manually verified end-to-end. Run it (`cd backend/src/CarSentinel.Backend
+&& dotnet run`) and point a gateway at it — see [backend/README.md](backend/README.md).
+Persisted retry queue (`BackendQueue`) and exponential backoff exist for the
+Gateway↔Backend hop; what's not built yet: WebSocket/SSE real-time push, evidence
+upload, remote commands, and webhooks (Phases 21.6–21.9). See
 [docs/BACKEND.md](docs/BACKEND.md) and [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md).
 
 ## Security

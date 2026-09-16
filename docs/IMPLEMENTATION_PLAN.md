@@ -29,7 +29,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 18 | Vehicle Integration | Compiles clean (both envs) — capability-gated ignition-sense input drives DRIVING/PARKED when wired; OBD-II/CAN blocked on hardware, not yet started |
 | 19 | Dashboard | Compiles clean (both envs) — gateway-hosted single-page dashboard + JSON API + live camera stream proxy; pending physical bench test |
 | 20 | Vehicle Installation | Planning checklist documented (`docs/wiring/VEHICLE_INSTALLATION.md`) — no firmware component, no physical install has happened |
-| 21 | Remote Backend, API & Hybrid Connectivity | 21.1–21.4 complete (Audit, Backend Abstraction, Persistent Remote Queue, Device Registration & Authentication), compiles clean, not yet bench-tested (no server to test against). 21.5 (Backend Server) needs a technology decision from the user before proceeding |
+| 21 | Remote Backend, API & Hybrid Connectivity | 21.1–21.5 complete: architecture audit, gateway-side backend abstraction, persistent retry queue, device registration/auth, and a real ASP.NET Core reference backend (`backend/`) manually verified end-to-end. Gateway firmware itself still not bench-tested against a live server. 21.6 onward not started |
 
 ## Phase 0 — Repository & Hardware Discovery
 
@@ -1494,15 +1494,63 @@ this lives in `lib/CarSentinelGateway/`). **Not bench-tested** — no real `/reg
 endpoint exists anywhere to register against; the registration flow's JSON parsing and
 state transitions are build-verified only.
 
+## Phase 21.5 — Backend Server (complete)
+
+**Technology: ASP.NET Core 8** — user's explicit choice (asked via the pending
+decision this entry used to record). New `backend/` directory at the repo root,
+**separate from `firmware/`** — a .NET solution, not embedded firmware; see
+`backend/README.md` for how to run it.
+
+**Implemented** (`backend/src/CarSentinel.Backend/`): minimal-API ASP.NET Core app,
+EF Core + SQLite (`EnsureCreated()`, no migrations — documented scope cut, not an
+oversight), matching exactly what the firmware side already sends:
+
+- `POST /api/v1/register` — anonymous (a device has no credential on first contact);
+  re-registration with an already-known `deviceId` requires the existing credential to
+  match, so this can't be used to hijack a device's identity. Server-assigns
+  `deviceId`/`credential` on first registration; the credential is stored only as a
+  SHA-256 hash (stricter than most credentials elsewhere in this project, since a
+  backend holding many devices' credentials is a higher-value target than any single
+  device's own config file).
+- `POST /api/v1/heartbeat` / `/telemetry` / `/events` / `/incidents` — device-credential
+  authenticated (`Authorization: Bearer <credential>` + `X-CarSentinel-Device-Id`,
+  constant-time comparison against the stored hash). Incidents are **upserted by
+  `incidentId`**, not appended — one row holds the latest state as
+  `IncidentCorrelator`'s state machine progresses, the idempotency behavior Section 13
+  of the Phase 21 brief asked for.
+- `GET /api/v1/devices`, `/devices/{id}`, `/devices/{id}/telemetry`, `/events`,
+  `/incidents`, `/incidents/{id}`, `/health` — anonymous reads (no user-account model
+  yet, documented gap).
+- Swagger UI at `/` (Swashbuckle) — OpenAPI 3.x document with the device-credential
+  auth scheme described, per Section 16 of the Phase 21 brief.
+
+**Bug found and fixed by actually running it, not just building it** (the same
+discipline this project has followed for firmware all along):
+`ORDER BY`-ing a `DateTimeOffset` column isn't supported by EF Core's SQLite provider
+(`System.NotSupportedException` at request time, not build time) — every timestamp
+field was `DateTimeOffset`, which is what the query endpoints order by. Switched every
+timestamp to `DateTime` (UTC) throughout. Caught by actually registering a device,
+sending a heartbeat/telemetry/incident, and querying them back — real
+requests, not just `dotnet build` succeeding — including confirming the incident
+upsert behavior works (posted the same `incidentId` twice with different `state`
+values, confirmed one row with the latest state and the original `firstReceivedAt`
+preserved) and that a wrong credential gets a real 401.
+
+**Not implemented in this sub-phase** (see `backend/README.md`'s own list): EF
+migrations, user-facing authentication on the read API, WebSocket/SSE (Phase 21.6),
+evidence/image upload (Phase 21.7), remote-command relay (Phase 21.8), webhooks
+(Phase 21.9).
+
+**Build/test status: builds clean (`dotnet build` on the solution) and was manually
+exercised end-to-end against a running instance** (register → heartbeat → telemetry →
+incident upsert → query → auth rejection), unlike every other Phase 21 sub-phase so
+far, which had no server to test against. The Gateway↔Backend integration itself
+(pointing a real `HttpBackend` at this running server) is still unverified — that
+needs real hardware, not just two processes on one machine.
+
 ## Next Step
 
-Phase 21.5 (Backend Server) is the first sub-phase that needs an actual decision
-before any more Gateway-side code makes sense to write: what technology hosts the
-first reference backend. `docs/IMPLEMENTATION_PLAN.md`'s Phase 21 brief suggested
-ASP.NET Core as a reasonable default (the user is a .NET developer) but explicitly
-said not to assume it without asking — this is a real scope/technology decision for
-the user, not something to pick unilaterally the way firmware implementation details
-have been throughout this project. Sub-phases 21.6–21.11 (real-time API, evidence
-upload, remote commands, webhooks, API docs, end-to-end testing) all depend on 21.5
-existing first. Everything else in the project remains independent of Phase 21 and can
+Phase 21.6 (Real-Time API — WebSocket/SSE) is next per the brief's own sub-phase order,
+placing the real-time server on the **backend** (`docs/REMOTE_ACCESS.md` Section 5),
+not the Gateway. Everything else in the project remains independent of Phase 21 and can
 still be bench-tested in the meantime — Phase 21 stays purely additive.

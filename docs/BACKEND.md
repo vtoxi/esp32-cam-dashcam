@@ -1,26 +1,24 @@
 # CarSentinel — Remote Backend
 
-**Status: Phase 21.1 architecture audit. Nothing in this document has been
-implemented — no backend code, no Gateway sync code, no repository scaffolding.**
-This records what exists today (nothing, confirmed by inspection — see below), the
-target design, and exactly what needs building. See
-`docs/IMPLEMENTATION_PLAN.md`'s Phase 21 entry for the sub-phase breakdown.
+**Status: Phase 21.1–21.5 complete.** A real reference backend now exists
+(`backend/` — ASP.NET Core 8, see `backend/README.md`), manually verified end-to-end
+(register → heartbeat → telemetry → incident upsert → query → auth rejection). This
+document's design sections below are now a description of what was built, not just a
+plan — see `docs/IMPLEMENTATION_PLAN.md`'s Phase 21 entries for the sub-phase-by-
+sub-phase history and exactly what's still open (21.6 onward).
 
-## 1. What exists today: nothing
+## 1. What existed before Phase 21.5 (historical — now superseded)
 
-Confirmed by inspecting the repository root and `firmware/`: there is no backend
-project (no `.csproj`/`.sln`, no `server/`, no `backend/`, no database, no API code
-anywhere in the tree). The Gateway's only HTTP surface today is
-`DashboardServer` (`lib/CarSentinelGateway/`) — a local-LAN-only page + JSON API
-(`/api/status`, `/api/devices`, `/api/incidents`, `/api/settings/*`) with no
-authentication, serving the browser directly from the ESP32-S3. There is no outbound
-HTTP client code on the Gateway today except `OtaManager` (fetches a firmware image
-from a configured URL) and `EmailProvider` (SMTP). Nothing in the firmware talks to
-any remote API, and no remote API exists to talk to.
+Before Phase 21.5, there was no backend project anywhere in the tree, confirmed by
+inspection. The Gateway's only HTTP surface was `DashboardServer`
+(`lib/CarSentinelGateway/`) — a local-LAN-only page + JSON API (`/api/status`,
+`/api/devices`, `/api/incidents`, `/api/settings/*`) with no authentication. This
+section is kept for the record; `backend/` now exists and implements the target
+design described below.
 
-This means Phase 21 is greenfield for the backend itself, but not for the Gateway-side
-abstractions it plugs into — those already exist in a form worth extending rather than
-replacing (Section 3).
+The Gateway-side abstractions this backend plugs into (`RemoteSyncManager`,
+`RemoteBackend`, `HttpBackend`, `BackendQueue`, `BackendConfig`) were built in Phases
+21.2–21.4 and already existed before the server did — see Section 3.
 
 ## 2. Existing patterns this phase should reuse, not compete with
 
@@ -165,20 +163,21 @@ dashboard, or anything else already working — it only stops backend sync, queu
 whatever would have been sent (Section 8, extending `OfflineQueue`'s existing
 bounded/persisted pattern rather than building a second, incompatible queue).
 
-## 7. Exact files (recommendation for Phase 21.2+, not created yet)
+## 7. Exact files (Phase 21.2–21.5, all created)
 
-New (all `lib/CarSentinelGateway/`, gateway-only — same reasoning as
+Gateway (`lib/CarSentinelGateway/`, gateway-only — same reasoning as
 `DashboardServer`/`AIThreatFramework`, nodes never need this):
-- `RemoteBackend.h` (interface)
-- `HttpBackend.h/.cpp`
-- `RemoteSyncManager.h/.cpp`
-- `BackendConfig.h/.cpp` (`lib/CarSentinelCommon/` instead — same tier as
-  `NetworkConfig`/`EmailConfig`, even though only the gateway ever populates it,
-  for consistency with where every other `*Config` class already lives)
+`RemoteBackend.h`, `HttpBackend.h/.cpp`, `RemoteSyncManager.h/.cpp`,
+`BackendQueue.h/.cpp`. `BackendConfig.h/.cpp` lives in `lib/CarSentinelCommon/`
+instead — same tier as `NetworkConfig`/`EmailConfig`, even though only the gateway
+ever populates it, for consistency with where every other `*Config` class already
+lives. `gateway_main.cpp` wires `RemoteSyncManager::begin()`/`loop()` and the
+`BACKENDCONFIG`/`BACKENDENABLE`/`BACKENDDISABLE`/`BACKENDSTATUS` serial commands;
+`DashboardServer.cpp` gained a Backend section on the Settings page. Nothing on the
+node side changed across any Phase 21 sub-phase so far.
 
-Modified: `gateway_main.cpp` (wires `RemoteSyncManager::begin()`/`loop()`, feeds it
-events from the same places that already call `IncidentCorrelator`/
-`NotificationManager`), `DashboardServer.cpp` (Settings page gains a Backend section,
-same pattern as the Wi-Fi/SMTP sections already there).
-
-Nothing on the node side changes for this phase.
+Backend (`backend/src/CarSentinel.Backend/`, a separate .NET solution, not embedded
+firmware): `Program.cs`, `Data/AppDbContext.cs`, `Models/{Device,TelemetryRecord,
+EventRecord,IncidentRecord}.cs`, `Auth/DeviceCredentialAuthenticationHandler.cs`,
+`Endpoints/{IngestEndpoints,QueryEndpoints}.cs`. See `backend/README.md` for how to
+run it.

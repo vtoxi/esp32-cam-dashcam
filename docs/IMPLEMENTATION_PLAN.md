@@ -29,6 +29,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 18 | Vehicle Integration | Compiles clean (both envs) — capability-gated ignition-sense input drives DRIVING/PARKED when wired; OBD-II/CAN blocked on hardware, not yet started |
 | 19 | Dashboard | Compiles clean (both envs) — gateway-hosted single-page dashboard + JSON API + live camera stream proxy; pending physical bench test |
 | 20 | Vehicle Installation | Planning checklist documented (`docs/wiring/VEHICLE_INSTALLATION.md`) — no firmware component, no physical install has happened |
+| 21 | Remote Backend, API & Hybrid Connectivity | Sub-phase 21.1 (Architecture Audit) complete — `docs/BACKEND.md`/`docs/REMOTE_ACCESS.md` produced. 21.2 onward not started |
 
 ## Phase 0 — Repository & Hardware Discovery
 
@@ -1300,11 +1301,96 @@ this session (`NetworkConfig::saved[]`, `connectBestKnown()`, the gateway dashbo
 Wi-Fi networks for the fallback path," which is still exactly what's needed, just no
 longer the *first* thing a node tries.
 
+## Next Step (superseded — see Phase 21 below)
+
+This entry's original "decide how the gap gets implemented" question was resolved:
+`TransportManager`/`OfflineQueue`/the boot-order fix were implemented directly (see
+this entry's own "Implemented" list above), not folded into a Phase 2/5/6 rework or
+given a separate phase number of their own. Phase 21 (below) is a distinct, larger
+follow-on — a remote backend/API layer — not a continuation of closing this entry's
+remaining gaps (gateway identity validation, `WiFiTransport`, provisioning's in-flow
+Wi-Fi-skip option all remain open, tracked above, independent of Phase 21).
+
+# Phase 21 — Remote Backend, API & Hybrid Connectivity
+
+Full design: [docs/BACKEND.md](BACKEND.md), [docs/REMOTE_ACCESS.md](REMOTE_ACCESS.md).
+`docs/ARCHITECTURE.md` updated to reference the optional backend layer.
+
+## Phase 21.1 — Architecture Audit (complete)
+
+**Scope: inspection and documentation only — no firmware or backend code was written.**
+
+**Findings** (full detail in `docs/BACKEND.md`/`docs/REMOTE_ACCESS.md`):
+
+1. **Current networking architecture**: ESP-NOW primary / Wi-Fi fallback /
+   standalone-mandatory, implemented (`docs/NETWORK.md`, `TransportManager`,
+   `OfflineQueue` — the entry directly above this one). Unaffected by Phase 21;
+   the backend sits *above* the Gateway, never between a node and its gateway.
+2. **ESP-NOW implementation**: `EspNowManager`/`EspNowTransport`/`EspNowProtocol` —
+   HMAC-signed, sequence-numbered, HELLO/HEARTBEAT discovery, ACK/retry for
+   ACK-expecting message types. Unaffected by Phase 21.
+3. **Wi-Fi fallback**: `WiFiManager` (connect/reconnect) + `TransportManager` (state
+   machine deciding when to use it). Unaffected by Phase 21 — the Gateway's *own*
+   Wi-Fi/Internet connection (for the backend) is a separate, pre-existing thing
+   (`WiFiManager` on the gateway already connects for the dashboard/email/OTA; the
+   backend just becomes one more thing that connection is used for).
+4. **Gateway capabilities**: device registry (`DeviceRegistry`), incident engine
+   (`IncidentCorrelator`), AI threat scoring (`AIThreatFramework`), email
+   (`NotificationManager`/`EmailProvider`), OTA (`OtaManager`, gateway-only), OLED
+   displays (`DisplayManager`), local dashboard (`DashboardServer`) — all confirmed
+   present and are exactly what `RemoteSyncManager` will read from to populate
+   telemetry/events/incidents sent to a backend.
+5. **Existing local API**: `DashboardServer`'s `/api/status`, `/api/devices`,
+   `/api/incidents`, `/api/settings/*` — unauthenticated, LAN-only, unversioned. Stays
+   exactly as-is (Section 18 of the Phase 21 spec explicitly asks to keep a lightweight
+   local API); the remote API is a separate, new, versioned, authenticated surface.
+6. **Event/incident queue**: `OfflineQueue` (Node↔Gateway, ESP-NOW-only delivery
+   today) and `IncidentCorrelator`'s own persisted records — neither currently syncs
+   anywhere off-device. A Gateway↔Backend queue (Phase 21.3) is new, analogous in
+   design (bounded, persisted, retry/backoff) but a distinct queue serving a distinct
+   hop.
+7. **Configuration system**: versioned JSON-per-concern
+   (`NetworkConfig`/`EmailConfig`/`CapabilitiesConfig`/`DeviceConfig`, each with
+   `schemaVersion` + a `migrate()` seam) — the exact pattern `BackendConfig`
+   (Phase 21.2) should follow, not a new configuration mechanism.
+8. **Security/authentication**: ESP-NOW HMAC (shared key, documented
+   single-default-key limitation — `docs/SECURITY.md`), no gateway-identity
+   validation, no per-device backend credential of any kind (none needed yet — no
+   backend exists). Phase 21.4 adds an entirely new authentication boundary
+   (Gateway↔Backend) layered on top, not a replacement for the ESP-NOW one.
+9. **Storage/evidence handling**: images live on each node's own SD card
+   (`EvidenceManager`), referenced (not copied) by incident records
+   (`IncidentEvidenceRef`). **No existing path exists for the Gateway to pull an
+   image off a node's SD on demand** — this is a real gap Phase 21.7 (evidence upload)
+   needs to close before "upload evidence to the backend" can work at all, since the
+   Gateway doesn't have the bytes today.
+
+**Exact files needing modification** (Phase 21.2+, none touched in this audit):
+`gateway_main.cpp` (wire `RemoteSyncManager`), `DashboardServer.cpp`/`.h` (Settings
+page gains a Backend section).
+
+**New files** (Phase 21.2+): `lib/CarSentinelGateway/RemoteBackend.h`,
+`HttpBackend.h/.cpp`, `RemoteSyncManager.h/.cpp`; `lib/CarSentinelCommon/
+BackendConfig.h/.cpp` (same tier as `NetworkConfig`, even though gateway-only in
+practice, for consistency with every other `*Config` class's location).
+
+**Architectural conflicts with this plan: none identified.** The existing provider
+-abstraction pattern (`AIThreatFramework`'s `ThreatAnalyzer`,
+`NotificationManager`'s `EmailProvider`) and the `Transport`/manager-above-it split
+(`EspNowTransport`/`EspNowManager`, `docs/NETWORK.md` Section 5) both directly
+support the `RemoteBackend`/`RemoteSyncManager` shape Phase 21 asks for — no
+competing system to reconcile, no rework of completed phases required.
+
+**Recommended implementation order**: as specified in the Phase 21 brief itself
+(21.2 Backend Abstraction → 21.3 Persistent Remote Queue → 21.4 Device Registration &
+Authentication → 21.5 Backend Server → 21.6 Real-Time API → 21.7 Evidence Upload →
+21.8 Remote Commands → 21.9 Webhooks → 21.10 API Documentation → 21.11 End-to-End
+Testing) — no reordering recommended; 21.2–21.4 build the Gateway-side abstraction and
+can be verified by build alone (no server to talk to yet, same "compiles clean, not
+yet bench-tested" pattern used throughout this project), while 21.5 is the first
+sub-phase requiring an actual backend deployment to test against.
+
 ## Next Step
 
-Before resuming the Phase 7/9/11–19 hardware bench-test queue: decide how the gap
-above gets implemented (new phase vs. folding into a Phase 2/5/6 rework), since testing
-Phase 2 (provisioning)/5 (ESP-NOW)/6 (device management) against the current code would
-mean bench-verifying behavior this update is about to change. Everything else
-(GPS/IMU/incidents/email/displays/AI framework/power mode/ignition sense/dashboard) is
-independent of this networking change and can still be bench-tested in the meantime.
+Per the Phase 21 brief's own instruction: stop after the audit. Phase 21.2 (Backend
+Abstraction) is the next sub-phase once resumed.

@@ -47,7 +47,12 @@ See `docs/NETWORK.md` for the transport state machine (ESP-NOW ↔ Wi-Fi fallbac
 standalone), `docs/PROVISIONING.md` for how a device gets its identity and (optional)
 Wi-Fi fallback credentials, `docs/SECURITY.md` for the ESP-NOW authentication model and
 its known gaps, `docs/OTA.md` for how firmware updates map onto this transport split,
-and `docs/TESTING.md` for the failure-scenario test matrix this model requires.
+`docs/TESTING.md` for the failure-scenario test matrix this model requires, and
+`docs/BACKEND.md`/`docs/REMOTE_ACCESS.md` (Phase 21, architecture-audit stage only —
+nothing implemented yet) for the optional remote-backend layer this local-first system
+is designed to extend to: `Node → ESP-NOW → Gateway → HTTPS → Backend`, with the
+Gateway remaining fully functional with zero backend/Internet connectivity, exactly as
+every tier below it already is.
 
 ## Toolchain (decided for Phase 1+)
 

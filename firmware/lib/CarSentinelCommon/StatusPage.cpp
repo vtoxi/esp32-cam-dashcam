@@ -16,7 +16,8 @@ void StatusPage::handleRoot() {
     String body = contentProvider ? contentProvider() : "<p>(no status available)</p>";
 
     String page =
-        "<!DOCTYPE html><html><head><meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
         "<meta http-equiv=refresh content=5>"
         "<title>" + title + "</title>"
         "<style>"
@@ -32,7 +33,7 @@ void StatusPage::handleRoot() {
         + body +
         "</body></html>";
 
-    server.send(200, "text/html", page);
+    server.send(200, "text/html; charset=utf-8", page);
 }
 
 void StatusPage::begin(const String& deviceTitle, StatusContentProvider provider) {

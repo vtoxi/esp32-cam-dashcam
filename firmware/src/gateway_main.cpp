@@ -53,7 +53,8 @@ static void onEspNowHeartbeat(const EspNowMessage& msg, const uint8_t mac[6]) {
         return;
     }
     String role = doc["role"] | "";
-    DeviceRegistry::upsertFromDiscovery(msg.senderNodeId, mac, role);
+    String displayName = doc["displayName"] | "";
+    DeviceRegistry::upsertFromDiscovery(msg.senderNodeId, mac, role, displayName);
     DeviceRegistry::updateHealth(msg.senderNodeId, doc["freeHeap"] | 0, doc["uptimeMs"] | 0);
 }
 

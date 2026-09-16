@@ -13,12 +13,12 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 2 | BLE + Wi-Fi Provisioning | Complete (pending bench verification) |
 | 3 | Hardware Capability Layer | Complete (pending bench verification) |
 | 4 | Single Camera Node | Compiles clean (both envs); node flashed and phase 4 code running on hardware — pending full functional bench test |
-| 5 | ESP-NOW | Compiles clean (both envs) — pending physical two-device bench test |
-| 6 | Dynamic Node Management | Compiles clean (both envs) — pending physical two-device bench test |
-| 7 | Multi-Camera Correlation | Compiles clean (both envs) — pending multi-device bench test |
-| 8 | GPS | Compiles clean (both envs) — pending physical GPS module bench test |
-| 9 | MPU6050 | Compiles clean (both envs) — pending physical IMU bench test |
-| 10 | Driving / Parking Modes | Compiles clean (both envs) — pending physical bench test |
+| 5 | ESP-NOW | Confirmed on real hardware — gateway↔node discovery working (see real-hardware update below) |
+| 6 | Dynamic Node Management | Confirmed on real hardware — zero-code device discovery verified; rename-sync bug found and fixed |
+| 7 | Multi-Camera Correlation | Compiles clean — needs 2+ camera nodes to bench-test, not yet done |
+| 8 | GPS | Confirmed booting/reporting correctly (`NO_FIX`, as expected with no sky view) — fix acquisition itself not yet tested |
+| 9 | MPU6050 | Compiles clean — no MPU6050 wired yet on the tested gateway, not bench-tested |
+| 10 | Driving / Parking Modes | Confirmed `PARKED (auto)` reporting correctly on real hardware; mode transitions not yet tested |
 | 11 | Incident & Evidence Engine | Compiles clean (both envs) — pending physical bench test |
 | 12 | Email Notification | Not started |
 | 13 | OLED Displays | Not started |
@@ -786,6 +786,50 @@ or the richer association data has touched a real filesystem yet.
   reading if `ImuManager` hasn't been polled recently relative to when the event
   arrived — worth checking real timing rather than assuming it's always fresh.
 
+## Real-hardware update: first gateway test (screenshots, both status pages)
+
+The user flashed and tested the gateway for the first time, sharing screenshots of both
+status pages. Genuinely good news: uptime 1202s with no crash, `ESP-NOW: active`,
+`Peers seen: 1`, and — the best evidence yet that Phase 6 actually works — the gateway's
+`DEVICES`/status page correctly listed the node (`NODE-2C3A30`, role `CAMERA`, `enabled:
+yes`, `14s ago`) with **zero manual registration**, exactly the zero-code discovery
+Phase 6 promised. GPS correctly reported `{"status":"NO_FIX"}` (no antenna view yet, not
+an error) and Security Mode showed `PARKED (auto)`. This is the first real confirmation
+that Phases 5–10's ESP-NOW/registry/mode-broadcast machinery functions on physical
+hardware, not just in review.
+
+Two real bugs surfaced from the screenshots themselves:
+
+1. **Mojibake** (`â€"` where an em dash should render) on both status pages — a missing
+   charset declaration. `StatusPage`'s HTML had no `<meta charset>` and the response was
+   sent as plain `text/html` with no charset in the `Content-Type` header either, so
+   browsers fell back to guessing (usually Latin-1/Windows-1252) against UTF-8-encoded
+   em-dash bytes. **Fixed**: added `<meta charset='UTF-8'>` and
+   `text/html; charset=utf-8` on the response.
+2. **Rename doesn't flow node → gateway.** The node's own status page showed Display
+   Name `CAM01`, but the gateway's registry still showed `NODE-2C3A30` for the same
+   device. Root cause: `RENAME` only ever pushed a name from gateway to node (via
+   `CONFIG_UPDATE`); a name set locally on the node (e.g. through BLE/AP provisioning,
+   which does let you set a display name directly) had no path back to the gateway's
+   registry. **Fixed**: the HEARTBEAT payload now carries the sender's own
+   `displayName`, and `DeviceRegistry::upsertFromDiscovery` adopts it whenever
+   non-empty and different — making a node's own name authoritative and keeping both
+   `RENAME` (gateway → node → next heartbeat → registry) and local provisioning
+   (node → next heartbeat → registry) consistent through the same mechanism, rather
+   than needing two different sync paths.
+
+**Not yet resolved, needs the user's input rather than a code fix:** the node's status
+page reported `firmware=0.4.0-phase4`, but the page itself displays ESP-NOW/Security
+Mode fields that don't exist in any build before Phase 10 — the running binary is
+clearly much newer than the version string it's reporting. Given several `pio run`
+(build-only, no upload) calls happened between phases without an accompanying reflash,
+this is most likely just a stale flash from a version string that got bumped in source
+after the last actual upload — but that's a guess, not confirmed. Worth clarifying when
+next reflashing: check what `pio run -e node -t upload` actually deploys and whether the
+version string it reports afterward matches `platformio.ini`.
+
+Both fixes above rebuild clean on both environments (verified directly).
+
 ## Next Step
 
 Flash the gateway and bench-test Phase 11 specifically: trigger a motion event, confirm
@@ -793,5 +837,7 @@ an `/incidents/INCIDENT-*.json` file actually appears on the gateway's flash (re
 via a small test sketch or a future OTA/file-access tool — there's no direct way to pull
 files off LittleFS remotely yet), confirm its GPS/IMU/env fields are populated
 correctly, and confirm `INCIDENTS` and retention behave as expected after enough events
-to exceed `MAX_STORED_INCIDENTS`. Once that's solid, continue with Phase 12 (Email
-Notification).
+to exceed `MAX_STORED_INCIDENTS`. Also reflash both devices with this update to confirm
+the mojibake and rename-sync fixes, and to get both devices onto a firmware version
+string that actually matches what's running. Once that's solid, continue with Phase 12
+(Email Notification).

@@ -15,11 +15,12 @@ any vehicle.
 > GPS/IMU (Phase 10), a read-only status page at each device's IP, and now real
 > persisted incident records on the gateway — full lifecycle, GPS/IMU/DHT association,
 > evidence references to each node's own SD-stored footage, and storage retention
-> (Phase 11). **Compiles clean for both targets.** The node has been flashed; two real
-> bugs found from its live boot log (a watchdog panic during Wi-Fi connect, and a
-> post-reboot camera reinit failure) are fixed but not yet reverified on hardware. The
-> gateway has not yet been flashed, and nothing from Phase 5 onward has been
-> bench-tested. See
+> (Phase 11). **Compiles clean for both targets, and both the node and gateway have now
+> been flashed and tested together on real hardware** — zero-code device discovery
+> (Phase 6) confirmed working end-to-end. Two more real bugs found from that test
+> (garbled em-dashes from a missing charset, and a node-initiated rename never reaching
+> the gateway's registry) are fixed. Multi-camera correlation (Phase 7), GPS fix
+> acquisition, IMU, and mode auto-transitions are still unverified. See
 > [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for full phase status and
 > known limitations.
 

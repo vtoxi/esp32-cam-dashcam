@@ -89,13 +89,17 @@ DeviceRegistryEntry* DeviceRegistry::find(const String& nodeId) {
 }
 
 DeviceRegistryEntry* DeviceRegistry::upsertFromDiscovery(const String& nodeId, const uint8_t mac[6],
-                                                           const String& role) {
+                                                           const String& role, const String& displayName) {
     String macStr = macToString(mac);
     DeviceRegistryEntry* existing = find(nodeId);
     if (existing) {
         bool changed = false;
         if (existing->mac != macStr) { existing->mac = macStr; changed = true; }
         if (!role.isEmpty() && existing->role != role) { existing->role = role; changed = true; }
+        if (!displayName.isEmpty() && existing->displayName != displayName) {
+            existing->displayName = displayName;
+            changed = true;
+        }
         existing->lastSeenMs = millis();
         if (changed) save();
         return existing;
@@ -109,7 +113,7 @@ DeviceRegistryEntry* DeviceRegistry::upsertFromDiscovery(const String& nodeId, c
 
     DeviceRegistryEntry& e = devices[deviceCount++];
     e.nodeId = nodeId;
-    e.displayName = nodeId;  // sensible default; RENAME updates it later
+    e.displayName = displayName.isEmpty() ? nodeId : displayName;
     e.role = role;
     e.mac = macStr;
     e.enabled = true;

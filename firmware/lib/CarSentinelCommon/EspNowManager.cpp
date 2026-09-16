@@ -5,6 +5,7 @@
 #include "PeerRegistry.h"
 #include "Logger.h"
 #include "Diagnostics.h"
+#include "DeviceConfig.h"
 
 #include <ArduinoJson.h>
 
@@ -48,6 +49,11 @@ void EspNowManager::sendHeartbeat() {
     doc["role"] = myRole;
     doc["uptimeMs"] = millis();
     doc["freeHeap"] = ESP.getFreeHeap();
+    // Carried so the gateway's DeviceRegistry can mirror a rename that happened locally
+    // on this device (e.g. via BLE/AP provisioning) — RENAME's gateway-initiated path
+    // already keeps the registry in sync, but until now a node-initiated rename had no
+    // way back to the gateway. See DeviceRegistry::upsertFromDiscovery.
+    doc["displayName"] = DeviceConfig::get().displayName;
     String payload;
     serializeJson(doc, payload);
     sendMessage(EspNowMessageType::HEARTBEAT, payload, nullptr);

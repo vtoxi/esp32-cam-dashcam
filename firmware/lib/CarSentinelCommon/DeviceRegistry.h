@@ -36,11 +36,14 @@ public:
     static bool begin();
 
     // Called on every HELLO/HEARTBEAT: creates the entry if unknown (enabled=true,
-    // displayName defaults to nodeId), or refreshes mac/role/hardwareProfile/
-    // firmwareVersion on an existing one without touching admin-set fields
-    // (displayName, enabled).
+    // displayName defaults to nodeId), or refreshes mac/role/hardwareProfile on an
+    // existing one. `displayName`, if non-empty, is adopted as-is — a node's own
+    // heartbeat-reported name is authoritative (it's what RENAME actually changed on
+    // the node itself; the registry mirrors it rather than diverging from it). Pass ""
+    // when the caller has no displayName to report (e.g. legacy/partial heartbeats).
     static DeviceRegistryEntry* upsertFromDiscovery(const String& nodeId, const uint8_t mac[6],
-                                                      const String& role);
+                                                      const String& role,
+                                                      const String& displayName = "");
     static void updateHealth(const String& nodeId, uint32_t freeHeap, unsigned long uptimeMs);
 
     static DeviceRegistryEntry* find(const String& nodeId);

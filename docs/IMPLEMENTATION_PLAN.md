@@ -30,7 +30,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 19 | Dashboard | Compiles clean (both envs) — gateway-hosted single-page dashboard + JSON API + live camera stream proxy; pending physical bench test |
 | 20 | Vehicle Installation | Planning checklist documented (`docs/wiring/VEHICLE_INSTALLATION.md`) — no firmware component, no physical install has happened |
 | 21 | Remote Backend, API & Hybrid Connectivity | **Complete (21.1–21.11)**: architecture audit, gateway-side backend abstraction, persistent retry queue, device registration/auth, a real ASP.NET Core reference backend (`backend/`), SSE real-time stream, end-to-end evidence upload, a Backend→Gateway command flow (one real command, SECURITY_MODE, wired end to end), outbound webhooks (admin-managed subscriptions, HMAC-signed delivery, retry, logging), a standalone API reference doc (`docs/API.md`), and a consolidated test matrix (`docs/TESTING.md`). Entirely optional and backward-compatible — every gateway/node still works fully standalone with it disabled. Backend independently curl-verified end to end; gateway firmware side of the flow not yet bench-tested against a live server (no hardware available) |
-| 22 | Frontend Console | **Complete**: Angular 22 + Tailwind CSS 3 operator console (`frontend/`) consuming the Phase 21 backend — dashboard, devices, telemetry, events, incidents (with evidence gallery), commands, webhooks, live activity, settings. Generic reusable data table (search/sort/pagination) and a shared component library used across every page. Verified end to end with a running backend + headless browser: every route renders error-free, table search/filter works, full webhook-create flow works against the live admin-gated API. `ng build` and backend `dotnet build` both succeed clean |
+| 22 | Frontend Console | **Complete + real-hardware bring-up**: Angular 22 + Tailwind CSS 3 operator console (`frontend/`) consuming the Phase 21 backend — dashboard, devices (incl. admin create/edit/delete), telemetry, events, incidents (with evidence gallery), commands, webhooks, live activity, settings. Generic reusable data table (search/sort/pagination) and a shared component library used across every page. First real ESP32-S3 gateway bring-up surfaced and fixed a genuine firmware boot crash (`esp_now_init()` before `WiFi.mode()` — see addendum below); gateway now registers against a live backend end to end. Deployed to `https://carsentinal.vtoxi.com/` (Plesk/IIS via FTP) |
 
 ## Phase 0 — Repository & Hardware Discovery
 
@@ -1848,12 +1848,80 @@ evidence type gets a download-only tile).
 **Build status: `ng build` succeeds clean; backend `dotnet build` succeeds clean
 after the CORS addition.**
 
+## Phase 22 addendum — first real hardware bring-up
+
+The first attempt to register an actual ESP32-S3 gateway against a running
+backend (rather than curl-only verification) surfaced a real, previously
+untested firmware bug, plus two frontend/backend gaps closed as a direct result.
+
+**Firmware bug found and fixed: ESP-NOW boot crash on real ESP32-S3 hardware.**
+The gateway hard-crashed on every boot (`Guru Meditation Error: LoadProhibited`,
+inside `esp_now_init()`) and never reached Wi-Fi/provisioning at all. Decoded via
+`xtensa-esp32s3-elf-addr2line` against the build's own `.elf` (no guessing): the
+crash was `esp_now_init()` (`EspNowTransport::begin()`) being called before
+anything had ever initialized the WiFi driver (`WiFi.mode(...)`) — a regression
+from the earlier networking-architecture update that made ESP-NOW start
+unconditionally, *before* any Wi-Fi/provisioning code now runs (previously,
+whatever ran first for provisioning had incidentally initialized WiFi already;
+once ESP-NOW moved earlier, nothing had). `esp_now_init()` needs the WiFi
+driver's radio/netif plumbing already up even though ESP-NOW itself never
+associates to an access point — this is documented Espressif behavior, and
+every official ESP-NOW example calls `WiFi.mode(WIFI_STA)` first for exactly
+this reason. Fix: `EspNowManager::begin()` (`lib/CarSentinelCommon/
+EspNowManager.cpp`, shared by both gateway and node) now calls
+`WiFi.mode(WIFI_STA)` before `transport->begin()`, unconditionally, harmless to
+call again once real Wi-Fi setup runs later. The node firmware has the identical
+code shape but apparently didn't crash on classic-ESP32 hardware — plausibly a
+per-chip/per-core-version tolerance difference, not evidence the ordering was
+ever actually safe there. Verified: gateway now boots clean, joins Wi-Fi,
+serves its dashboard, and self-registers against a live backend end to end.
+Node flash size unaffected (+16 bytes, both environments build clean).
+
+**Backend + frontend: device lifecycle management (create/update/delete),
+requested directly by the user after noticing the console had no way to remove
+a stale/test device record.** Added `DeviceEndpoints.cs` (admin-key gated, same
+posture as `CommandEndpoints`/`WebhookEndpoints`): `POST /api/v1/devices`
+pre-provisions a device ID + credential for a gateway that hasn't self-registered
+yet (returned once; converges with the existing `/register` re-registration path
+once the real gateway presents that same ID+credential), `PATCH /api/v1/devices/{id}`
+edits `tenantId` (the only field this backend never sets on a device's own
+behalf), `DELETE /api/v1/devices/{id}` removes the device record only
+(historical telemetry/events/incidents/evidence are kept). Deliberately no
+"create a fully-registered device out of nothing" — discussed with the user
+explicitly, since a manufactured record could never be proven by real hardware;
+pre-provisioning was the design that actually fits. Frontend: a "Pre-provision
+device" dialog (same one-time-secret pattern as Create Webhook), a per-row edit
+(tenant) and delete action on the Devices list, and matching actions on the
+Device Detail page — all admin-key gated, hidden entirely when no admin key is
+set. Verified end to end against the live backend via curl (create, update,
+delete, and 401-without-key for all three) and a full `ng build`.
+
+**Frontend deployed**: `https://carsentinal.vtoxi.com/` (Plesk/IIS hosting, via
+FTP) — production build now points at `https://carsentinal-api.vtoxi.com/api/v1`
+by default (a sibling subdomain already reserved for the backend, not yet
+deployed there — overridable anytime via the console's own Settings page without
+a rebuild). Added `public/web.config` (auto-copied into every build) with an IIS
+SPA-fallback rewrite rule, layered on top of the Plesk-managed error-page config
+already present on that webroot — without it, refreshing or deep-linking to any
+non-root route (e.g. `/devices/gw-abc123`) 404s against IIS. Known gap: the TLS
+certificate currently presented for `carsentinal.vtoxi.com` doesn't match its
+hostname (a Plesk SSL/TLS certificate-provisioning step, not a code or deployment
+issue) — tracked as an open item, not silently left unmentioned.
+
+**Build status: firmware — both environments compile and link clean. Backend —
+`dotnet build` succeeds clean. Frontend — `ng build --configuration production`
+succeeds clean, deployed and reachable.**
+
 ## Next Step
 
 Both the Phase 21 remote backend and its Phase 22 console are complete and
-independently verified. Remaining project-wide work: physical bench-testing of
-Phases 1–20 (tracked per-phase in the status table above), and, whenever real ESP32
-gateway/node hardware is available, bench-verifying the Phase 21 flows currently
+independently verified — including, as of this addendum, a real end-to-end run
+against physical ESP32-S3 gateway hardware. Remaining project-wide work:
+physical bench-testing of Phases 1–20 (tracked per-phase in the status table
+above); deploying the backend itself to `carsentinal-api.vtoxi.com` so the
+publicly-hosted console has something to talk to; fixing the `carsentinal.vtoxi.com`
+TLS certificate in Plesk; and, whenever real node hardware is paired with the
+gateway over ESP-NOW, bench-verifying the remaining Phase 21 flows currently
 listed as firmware-side "Not tested" in `docs/TESTING.md` Section 4 — the console
 built in Phase 22 is exactly the tool to observe those flows against once that
 hardware pairing exists.

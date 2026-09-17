@@ -9,6 +9,7 @@
 #include "WiFiManager.h"
 
 #include <ArduinoJson.h>
+#include <WiFi.h>
 
 namespace CarSentinel {
 
@@ -32,6 +33,18 @@ bool EspNowManager::begin(const String& nodeId, const String& role) {
     myRole = role;
 
     EspNowSecurity::begin();
+
+    // esp_now_init() needs the WiFi driver already brought up — even though ESP-NOW
+    // never associates to an access point, it reuses the WiFi driver's radio/netif
+    // plumbing internally. Since ESP-NOW now starts unconditionally, before any
+    // Wi-Fi/provisioning code has ever touched the WiFi driver (docs/NETWORK.md:
+    // "ESP-NOW starts unconditionally, regardless of Wi-Fi/provisioning state"),
+    // this call can no longer assume something upstream already did it — a real
+    // boot crash (esp_now_init() dereferencing uninitialized WiFi/netif state,
+    // Guru Meditation LoadProhibited) was observed on ESP32-S3 gateway hardware
+    // without this. WIFI_STA is idempotent/harmless to call again once real Wi-Fi
+    // setup runs later — it does not connect to anything by itself.
+    WiFi.mode(WIFI_STA);
 
     if (!transport->begin()) {
         Logger::error(TAG, "Transport init failed — ESP-NOW unavailable this boot");

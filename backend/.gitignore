@@ -6,4 +6,6 @@ obj/
 *.db-wal
 evidence/
 appsettings.Development.json
-Properties/launchSettings.json
+**/Properties/launchSettings.json
+*.csproj.user
+dotnet-tools.json

@@ -55,3 +55,41 @@ when:
 3. `WIFILIST`/saved-network behavior (already implemented,
    `docs/IMPLEMENTATION_PLAN.md`'s "Multiple remembered Wi-Fi networks" entry) continues
    working unchanged — this update must not regress it.
+
+## 4. Phase 21 — Remote Backend end-to-end test matrix (Phase 21.11)
+
+Every backend flow below was verified by actually running `backend/` and issuing
+real HTTP requests (not just `dotnet build`), sub-phase by sub-phase, as each one
+shipped (see `docs/IMPLEMENTATION_PLAN.md`'s Phase 21.5–21.9 write-ups for the full
+detail behind each row). This section consolidates those into one matrix and
+separates "verified" from "hardware-gated" — the backend side of every flow has real
+coverage; the firmware side of most of them does not, because no physical gateway has
+been available to run against a live backend instance during this project's
+development.
+
+| # | Flow | Backend-side (curl) | Firmware-side (real hardware) |
+|---|---|---|---|
+| 1 | Fresh device registration (`POST /register`) | Verified — returns `deviceId`+`credential`, stored hashed | Not tested — `RemoteSyncManager::attemptRegistration()` build-verified only |
+| 2 | Re-registration with existing credential | Verified — confirms match, doesn't reissue credential; wrong credential → 401 | Not tested |
+| 3 | Heartbeat + `device.online`/`device.heartbeat` events | Verified — gap-based online detection, both events observed on the SSE stream | Not tested |
+| 4 | Telemetry ingestion | Verified — stored, `telemetry` event published | Not tested |
+| 5 | Event ingestion (`motion.detected`) | Verified | Not tested |
+| 6 | Incident upsert by `incidentId` (create then update) | Verified — posted the same `incidentId` twice, confirmed one row, `firstReceivedAt` preserved, `incident.created` then `incident.updated` published | Not tested |
+| 7 | Evidence upload (raw JPEG, byte-for-byte) | Verified — uploaded a fake JPEG, listed metadata, downloaded, `diff`'d identical to the original | Not tested — `fetchAndUploadEvidence()`'s node→gateway HTTP GET and gateway→backend raw POST are both build-verified only |
+| 8 | SSE real-time stream | Verified — `curl -N`'d the stream in the background, confirmed a live envelope arrived for a real event | N/A (browser/external-client-facing, no firmware involvement) |
+| 9 | Remote command issue → poll → result → history | Verified — issued with/without/wrong admin key (401/200/401), polled as the target device (delivered once, empty second poll), reported a result, confirmed history shows `EXECUTED`, confirmed a different device's poll is rejected (401) | Not tested — `handleRemoteCommand()`'s `SECURITY_MODE` dispatch and `RemoteSyncManager`'s 15s poll loop are build-verified only |
+| 10 | Webhook subscription CRUD + delivery | Verified — created a subscription pointed at the backend's own `/health`, triggered a real heartbeat, confirmed two logged delivery attempts (initial + retry) with real HTTP status codes and a correctly computed HMAC signature | N/A (backend-only feature, no firmware involvement) |
+
+**What "done" looks like for Phase 21.11 specifically**: every row above with a
+firmware-side "Not tested" needs a real gateway, provisioned with `BACKENDCONFIG
+CUSTOM_SERVER <backend URL>`, running against a live `backend/` instance, to move
+from "build-verified" to "bench-verified." That hardware pairing hasn't been
+available during this development window — this matrix exists so that gap is
+explicit and actionable rather than silently assumed away. Nothing about the backend
+implementation itself is blocked on it; the backend's own correctness is independently
+covered by the curl-based verification in the middle column.
+
+This closes out Phase 21's own sub-phase checklist (21.1–21.11). The project's
+overall "not yet bench-tested on real hardware" gap — true for most phases, not
+specific to Phase 21 — remains tracked the same way it always has: per-phase in
+`docs/IMPLEMENTATION_PLAN.md`'s status table.

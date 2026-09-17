@@ -200,9 +200,12 @@ backend), a Backend→Gateway remote command flow, and admin-managed webhooks
 (HMAC-signed outbound delivery), Swagger UI, all manually verified end-to-end. Run it
 (`cd backend/src/CarSentinel.Backend && dotnet run`) and point a gateway at it — see
 [backend/README.md](backend/README.md). Persisted retry queue (`BackendQueue`) and
-exponential backoff exist for the Gateway↔Backend hop. What's not built yet: API
-documentation is now written up ([docs/API.md](docs/API.md)); end-to-end testing
-against real hardware (Phase 21.11) remains outstanding. See
+exponential backoff exist for the Gateway↔Backend hop. Phase 21 (21.1–21.11) is
+complete — API documented in [docs/API.md](docs/API.md), test matrix in
+[docs/TESTING.md](docs/TESTING.md). Every backend flow is curl-verified end to end;
+the one remaining gap is bench-testing the gateway firmware side against a live
+backend, since no physical hardware pairing has been available during development
+(tracked explicitly, not hidden — see `docs/TESTING.md` Section 4). See
 [docs/BACKEND.md](docs/BACKEND.md), [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md),
 and [docs/API.md](docs/API.md).
 

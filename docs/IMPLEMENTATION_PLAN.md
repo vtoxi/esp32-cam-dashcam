@@ -29,7 +29,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 18 | Vehicle Integration | Compiles clean (both envs) — capability-gated ignition-sense input drives DRIVING/PARKED when wired; OBD-II/CAN blocked on hardware, not yet started |
 | 19 | Dashboard | Compiles clean (both envs) — gateway-hosted single-page dashboard + JSON API + live camera stream proxy; pending physical bench test |
 | 20 | Vehicle Installation | Planning checklist documented (`docs/wiring/VEHICLE_INSTALLATION.md`) — no firmware component, no physical install has happened |
-| 21 | Remote Backend, API & Hybrid Connectivity | 21.1–21.10 complete: architecture audit, gateway-side backend abstraction, persistent retry queue, device registration/auth, a real ASP.NET Core reference backend (`backend/`), SSE real-time stream, end-to-end evidence upload, a Backend→Gateway command flow (one real command, SECURITY_MODE, wired end to end), outbound webhooks (admin-managed subscriptions, HMAC-signed delivery, retry, logging), and a standalone API reference doc (`docs/API.md`). Gateway firmware itself still not bench-tested against a live server. 21.11 not started |
+| 21 | Remote Backend, API & Hybrid Connectivity | **Complete (21.1–21.11)**: architecture audit, gateway-side backend abstraction, persistent retry queue, device registration/auth, a real ASP.NET Core reference backend (`backend/`), SSE real-time stream, end-to-end evidence upload, a Backend→Gateway command flow (one real command, SECURITY_MODE, wired end to end), outbound webhooks (admin-managed subscriptions, HMAC-signed delivery, retry, logging), a standalone API reference doc (`docs/API.md`), and a consolidated test matrix (`docs/TESTING.md`). Entirely optional and backward-compatible — every gateway/node still works fully standalone with it disabled. Backend independently curl-verified end to end; gateway firmware side of the flow not yet bench-tested against a live server (no hardware available) |
 
 ## Phase 0 — Repository & Hardware Discovery
 
@@ -1758,12 +1758,42 @@ driven reference doc, not restructuring the generated spec.
 
 **Build status:** no code changes this sub-phase.
 
+## Phase 21.11 — End-to-End Testing (complete)
+
+Added a **Phase 21 test matrix** to `docs/TESTING.md` (Section 4) consolidating
+every backend flow curl-verified across 21.5–21.9 into one table, split into a
+backend-side column (real coverage for all 10 flows) and a firmware-side column
+(build-verified only for every flow that needs a physical gateway talking to a live
+backend — registration, heartbeat, telemetry, events, incidents, evidence upload,
+remote commands; the SSE stream and webhooks are backend-only features with no
+firmware leg to test). No new test infrastructure was built this sub-phase —
+achievable testing without physical hardware was already done incrementally as each
+prior sub-phase shipped (that's what "verified by actually running it" meant in
+every 21.5–21.9 write-up above); this sub-phase's job was consolidating that
+coverage into one document and stating plainly what remains hardware-gated, rather
+than leaving it implicit across nine separate commit messages.
+
+**This closes out Phase 21 (21.1–21.11), the Remote Backend, API & Hybrid
+Connectivity specification.** What Phase 21 delivered: an optional, fully
+backward-compatible remote backend layer — every gateway and node continues to work
+completely standalone with it disabled (the default) — covering hybrid ESP-NOW/Wi-Fi
+networking (the separate "Networking Architecture Update" folded into this same
+window), a pluggable `RemoteBackend` abstraction, a persistent retry queue, device
+registration/auth, a real ASP.NET Core reference server, real-time push via SSE,
+end-to-end evidence sync, remote commands, webhooks, and API documentation. What
+Phase 21 explicitly does not deliver, documented rather than hidden throughout: EF
+migrations, a user-account/login model, `device.offline` detection, evidence
+sync-policy filtering, more than one real remote command type, a persisted webhook
+retry queue, and — the largest remaining gap — bench verification of any of it
+against real ESP32 hardware talking to a live backend, tracked explicitly in
+`docs/TESTING.md` Section 4 rather than left implicit.
+
+**Build status: no code changes this sub-phase** (documentation only).
+
 ## Next Step
 
-Phase 21.11 (End-to-End Testing) — document/execute whatever test matrix is
-achievable without physical ESP32 hardware (every backend flow has already been
-curl-verified sub-phase by sub-phase; this pass consolidates that into a single
-test-matrix document and identifies exactly what remains hardware-gated), updating
-`docs/TESTING.md`. This closes out Phase 21. Everything else in the project remains
-independent of Phase 21 and can still be bench-tested in the meantime — Phase 21
-stays purely additive.
+Phase 21 is complete. No further sub-phases are defined by the Phase 21 brief.
+Remaining project-wide work is what it was before Phase 21 began: physical
+bench-testing of Phases 1–20 (tracked per-phase in the status table above) and,
+whenever real ESP32 gateway/node hardware is available, bench-verifying the Phase 21
+flows currently listed as firmware-side "Not tested" in `docs/TESTING.md` Section 4.

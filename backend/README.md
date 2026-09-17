@@ -61,6 +61,19 @@ assigns. See `RemoteSyncManager.cpp`'s `attemptRegistration()` for exactly what 
   published for SSE (see above) is also POSTed to every enabled, matching
   subscription, signed with `X-CarSentinel-Signature: sha256=<hex HMAC-SHA256 of the
   body>`, one retry on failure, every attempt logged.
+- `POST /api/v1/devices` — admin-gated device lifecycle management, added for the
+  Phase 22 console: pre-provisions a device ID + credential (returned exactly once)
+  before any real hardware ever registers, so an operator can hand a known identity
+  to a technician ahead of a physical install. `PATCH /api/v1/devices/{id}` edits
+  `tenantId` (the only field this backend never sets on a device's own behalf —
+  everything else is firmware-reported and gets overwritten on the next
+  register/heartbeat anyway). `DELETE /api/v1/devices/{id}` removes the device
+  record only; historical telemetry/events/incidents/evidence stay. Deliberately no
+  "create a fully-registered device" — a manufactured record has no real credential
+  a gateway could ever present, which is exactly what pre-provisioning solves
+  instead (a gateway that later registers with that same ID+credential is treated
+  as updating the pre-provisioned record, via the same re-registration logic
+  `POST /register` already had).
 
 ## What's not here yet (see `docs/IMPLEMENTATION_PLAN.md`'s Phase 21 entries)
 

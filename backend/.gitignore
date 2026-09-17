@@ -7,5 +7,6 @@ obj/
 evidence/
 appsettings.Development.json
 **/Properties/launchSettings.json
+**/Properties/PublishProfiles/
 *.csproj.user
 dotnet-tools.json

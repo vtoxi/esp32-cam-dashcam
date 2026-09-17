@@ -249,6 +249,57 @@ diagnosing a receiver that stopped responding.
 
 ---
 
+## Device lifecycle management (Phase 22, admin-key gated)
+
+### `POST /api/v1/devices`
+
+Requires `X-Admin-Key`. Pre-provisions a device — generates a device ID and
+credential before any real hardware has registered, so an operator can hand a
+known identity to a technician ahead of a physical install. Returns the
+credential exactly once. All body fields are optional.
+
+```
+curl -s -X POST http://127.0.0.1:5299/api/v1/devices \
+  -H "X-Admin-Key: <admin key>" -H "Content-Type: application/json" \
+  -d '{"hardwareProfile":"ESP32_S3_N16R8_GATEWAY","nodeId":"GATEWAY-VAN-04","tenantId":"acme"}'
+```
+
+```json
+{"deviceId":"gw-938f2e8e","credential":"e55945b6...","hardwareProfile":"ESP32_S3_N16R8_GATEWAY","nodeId":"GATEWAY-VAN-04","tenantId":"acme"}
+```
+
+Enter the returned `deviceId` and `credential` into the physical gateway's own
+Settings page (Remote Backend section) or `BACKENDCONFIG` serial command. When
+that gateway then calls `POST /register` with this same ID and credential, it's
+treated as updating the pre-provisioned record (the same re-registration logic
+`/register` already has for any device), not a fresh registration.
+
+There is deliberately no way to fabricate an already-"registered" device with no
+credential exchange at all — a manufactured record could never be proven by real
+hardware.
+
+### `PATCH /api/v1/devices/{id}`
+
+Requires `X-Admin-Key`. The only editable field is `tenantId` — every other
+`Device` field (`hardwareProfile`, `firmwareVersion`, `nodeId`) is firmware-reported
+and gets overwritten on the device's next register/heartbeat regardless of what an
+admin sets here.
+
+```
+curl -s -X PATCH http://127.0.0.1:5299/api/v1/devices/gw-938f2e8e \
+  -H "X-Admin-Key: <admin key>" -H "Content-Type: application/json" \
+  -d '{"tenantId":"acme-fleet-2"}'
+```
+
+### `DELETE /api/v1/devices/{id}`
+
+Requires `X-Admin-Key`. Removes the `Device` row only — telemetry, events,
+incidents, and evidence already ingested under this device ID are left in place
+(no FK/cascade is configured between them; keeping historical/audit data after a
+device is decommissioned is the more defensible default here).
+
+---
+
 ## What's intentionally not here
 
 No EF migrations, no user-account/login system (every read endpoint above is

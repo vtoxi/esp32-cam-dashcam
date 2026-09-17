@@ -1,4 +1,14 @@
 <app-page-header title="Devices" subtitle="Every gateway registered with the backend." icon="device-phone">
+  @if (admin.hasKey()) {
+    <button
+      type="button"
+      class="focus-ring flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-semibold bg-brand-600 hover:bg-brand-500 text-white"
+      (click)="create()"
+    >
+      <app-icon name="plus" class="w-4 h-4" />
+      Pre-provision device
+    </button>
+  }
   <button
     type="button"
     class="focus-ring flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium border border-white/10 text-slate-300 hover:bg-white/5"
@@ -8,6 +18,13 @@
     Refresh
   </button>
 </app-page-header>
+
+@if (!admin.hasKey()) {
+  <p class="text-xs text-slate-500 mb-4 flex items-center gap-1.5">
+    <app-icon name="key" class="w-3.5 h-3.5" />
+    Set an admin key in <a routerLink="/settings" class="text-brand-300 hover:underline">Settings</a> to pre-provision, edit, or delete devices.
+  </p>
+}
 
 <div class="rounded-2xl border border-white/5 bg-surface-400/60 p-5 shadow-panel">
   <app-data-table
@@ -37,6 +54,31 @@
     </ng-template>
     <ng-template appCellTemplate="registeredAt" let-row>
       <span [title]="row.registeredAt">{{ row.registeredAt | relativeTime }}</span>
+    </ng-template>
+    <ng-template appCellTemplate="tenantId" let-row>
+      <span class="text-slate-400">{{ row.tenantId || '—' }}</span>
+    </ng-template>
+    <ng-template appCellTemplate="actions" let-row>
+      @if (admin.hasKey()) {
+        <div class="flex items-center gap-1 justify-end">
+          <button
+            type="button"
+            class="focus-ring p-1.5 rounded-md text-slate-400 hover:text-brand-300 hover:bg-white/5"
+            title="Edit tenant"
+            (click)="edit(row, $event)"
+          >
+            <app-icon name="cog-6-tooth" class="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            class="focus-ring p-1.5 rounded-md text-slate-400 hover:text-rose-400 hover:bg-white/5"
+            title="Delete device"
+            (click)="remove(row, $event)"
+          >
+            <app-icon name="trash" class="w-4 h-4" />
+          </button>
+        </div>
+      }
     </ng-template>
   </app-data-table>
 </div>

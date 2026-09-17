@@ -93,6 +93,7 @@ app.MapQueryEndpoints();
 app.MapStreamEndpoints();
 app.MapCommandEndpoints();
 app.MapWebhookEndpoints();
+app.MapDeviceEndpoints();
 
 app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
 

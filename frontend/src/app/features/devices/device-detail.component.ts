@@ -13,8 +13,10 @@ import { EventLogService } from '../../core/services/telemetry.service';
 import { IncidentService } from '../../core/services/incident.service';
 import { CommandService } from '../../core/services/command.service';
 import { IssueCommandDialogComponent } from '../commands/issue-command-dialog.component';
+import { EditDeviceDialogComponent } from './edit-device-dialog.component';
 import { DialogService } from '../../shared/components/dialog/dialog.service';
 import { NotificationService } from '../../core/services/notification.service';
+import { AdminAuthService } from '../../core/services/admin-auth.service';
 
 type TabId = 'overview' | 'telemetry' | 'events' | 'incidents' | 'commands';
 
@@ -42,6 +44,7 @@ export class DeviceDetailComponent implements OnInit {
   private readonly dialogs = inject(DialogService);
   private readonly notifications = inject(NotificationService);
   private readonly router = inject(Router);
+  readonly admin = inject(AdminAuthService);
 
   readonly device = signal<Device | null>(null);
   readonly loadingDevice = signal(true);
@@ -144,6 +147,32 @@ export class DeviceDetailComponent implements OnInit {
       this.notifications.success('Command issued.');
       this.loadCommands();
     }
+  }
+
+  async editDevice(): Promise<void> {
+    const d = this.device();
+    if (!d) return;
+    const result = await this.dialogs.open(EditDeviceDialogComponent, { device: d });
+    if (result) {
+      this.notifications.success('Device updated.');
+      this.loadDevice();
+    }
+  }
+
+  async deleteDevice(): Promise<void> {
+    const d = this.device();
+    if (!d) return;
+    const confirmed = await this.dialogs.confirm({
+      title: 'Delete device',
+      message: `Delete ${d.id}? Historical telemetry, events, and incidents for this device are kept; only the device record itself is removed.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!confirmed) return;
+    this.deviceService.delete(d.id).subscribe(() => {
+      this.notifications.success('Device deleted.');
+      this.router.navigate(['/devices']);
+    });
   }
 
   openIncident(incidentId: string): void {

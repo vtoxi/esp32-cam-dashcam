@@ -97,11 +97,64 @@ global HTTP error interceptor so no feature code writes its own error handling
 boilerplate), `device-picker`, `copy-field` (for one-time secrets/credentials),
 `stat-card`, `page-header`, `empty-state`, and a small inline-SVG `icon` component.
 
+## Device lifecycle (admin)
+
+Beyond reading what devices report, the Devices page (with an admin key set in
+Settings) can:
+- **Pre-provision** a device — generates a device ID + credential before any real
+  hardware registers (`POST /api/v1/devices`), so an operator can hand a known
+  identity to a technician ahead of a physical install. The credential is shown
+  exactly once; it must be entered into the gateway's own Settings page (Remote
+  Backend section) or `BACKENDCONFIG` serial command. A gateway that registers
+  with that same ID + credential is treated as an update to the pre-provisioned
+  record, not a new device (the backend's existing re-registration logic already
+  did this — pre-provisioning just seeds it ahead of time).
+- **Edit** a device's Tenant ID — the one field this backend never sets on a
+  device's own behalf. Hardware profile/firmware version/node ID are
+  firmware-reported and would just be overwritten on the device's next
+  register/heartbeat, so there's no edit UI for those.
+- **Delete** a device record — removes the `Device` row only; historical
+  telemetry/events/incidents/evidence already ingested under that device ID are
+  kept (a documented choice, not an oversight — decommissioning a device doesn't
+  erase its audit trail).
+
+There's deliberately no "create a fully-registered device out of nothing" —
+a manufactured device record with no real hardware behind it could never present
+a valid credential, which is exactly what pre-provisioning solves instead.
+
 ## Building
 
 ```bash
-ng build
+ng build --configuration production
 ```
 
-Output goes to `dist/frontend/`. `fileReplacements` swaps in
-`environment.production.ts` for a production build (see `angular.json`).
+Output goes to `dist/frontend/browser/`. `fileReplacements` swaps in
+`environment.production.ts` (see `angular.json`), which by default points the
+build at `https://carsentinal-api.vtoxi.com/api/v1` — override per-deployment via
+the app's own Settings page (localStorage) without rebuilding.
+
+`public/web.config` is copied into every build automatically (Angular copies
+everything under `public/` into the output root) — it's an IIS config for a
+Plesk/Windows deployment: an SPA-fallback rewrite rule (any request that isn't a
+real file on disk serves `index.html`, so refreshing or deep-linking to a route
+like `/devices/gw-abc123` doesn't 404 against IIS) plus the Plesk-managed
+error-page config it was layered on top of. A non-IIS host (Apache/Nginx/static
+host) needs the equivalent SPA-fallback rule in whatever config that host uses
+instead — `web.config` itself does nothing there.
+
+### Deploying to carsentinal.vtoxi.com (Plesk/IIS, FTP)
+
+The console is deployed at `https://carsentinal.vtoxi.com/`, uploaded via FTP to
+the Plesk-provisioned `carsentinal.vtoxi.com/` webroot (contents of
+`dist/frontend/browser/` go directly there — no `httpdocs` subfolder on this
+particular IIS-based Plesk layout). A sibling subdomain,
+`carsentinal-api.vtoxi.com`, is already reserved for the backend but nothing is
+deployed there yet (still Plesk's default placeholder) — until it is, the
+deployed console's API calls fail with a clear "cannot reach backend" toast,
+exactly as designed.
+
+Known gap as of this deployment: the SSL certificate presented for
+`carsentinal.vtoxi.com` doesn't match its hostname (a TLS handshake against it
+fails with a principal-name mismatch) — the site serves correctly once that's
+fixed in Plesk (subdomain → SSL/TLS Certificates → issue a Let's Encrypt cert for
+it), it's a certificate-provisioning step, not a deployment or code issue.

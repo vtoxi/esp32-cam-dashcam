@@ -20,6 +20,8 @@ builder.Services.AddAuthentication("DeviceCredential")
 builder.Services.AddAuthorization();
 builder.Services.AddSingleton<EventBroadcaster>();
 builder.Services.AddSingleton<EvidenceStorage>();
+builder.Services.AddHttpClient();
+builder.Services.AddSingleton<WebhookDispatcher>();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
@@ -63,10 +65,16 @@ app.UseSwaggerUI(c =>
 app.UseAuthentication();
 app.UseAuthorization();
 
+// Attach once at startup — every Publish() call site (Ingest/Command endpoints)
+// already feeds SSE subscribers; this makes the same events feed webhook delivery
+// too, with no changes to those call sites (Phase 21.9).
+app.Services.GetRequiredService<WebhookDispatcher>().Attach(app.Services.GetRequiredService<EventBroadcaster>());
+
 app.MapIngestEndpoints();
 app.MapQueryEndpoints();
 app.MapStreamEndpoints();
 app.MapCommandEndpoints();
+app.MapWebhookEndpoints();
 
 app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
 

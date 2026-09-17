@@ -20,6 +20,12 @@ public class EventBroadcaster
 {
     private readonly ConcurrentDictionary<Guid, Channel<string>> subscribers = new();
 
+    // Phase 21.9 — WebhookDispatcher attaches itself here at startup (Program.cs) so
+    // every Publish() call already wired for SSE also feeds webhook delivery, without
+    // touching any of the call sites in IngestEndpoints/CommandEndpoints again — one
+    // event taxonomy, one publish call per event, two consumers.
+    public event Action<string, string, string>? OnEvent;  // (eventType, deviceId, envelopeJson)
+
     public Guid Subscribe(out ChannelReader<string> reader)
     {
         var channel = Channel.CreateBounded<string>(new BoundedChannelOptions(64)
@@ -54,6 +60,7 @@ public class EventBroadcaster
         {
             kvp.Value.Writer.TryWrite(envelope);
         }
+        OnEvent?.Invoke(eventType, deviceId, envelope);
     }
 
     public int SubscriberCount => subscribers.Count;

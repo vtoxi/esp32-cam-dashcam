@@ -22,6 +22,8 @@ public class AppDbContext : DbContext
     public DbSet<IncidentRecord> Incidents => Set<IncidentRecord>();
     public DbSet<EvidenceRecord> Evidence => Set<EvidenceRecord>();
     public DbSet<CommandRecord> Commands => Set<CommandRecord>();
+    public DbSet<WebhookSubscription> WebhookSubscriptions => Set<WebhookSubscription>();
+    public DbSet<WebhookDelivery> WebhookDeliveries => Set<WebhookDelivery>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -33,5 +35,6 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<EvidenceRecord>().HasIndex(e => e.IncidentId);
         modelBuilder.Entity<CommandRecord>().HasKey(c => c.CommandId);
         modelBuilder.Entity<CommandRecord>().HasIndex(c => new { c.TargetDeviceId, c.Status });
+        modelBuilder.Entity<WebhookDelivery>().HasIndex(d => d.SubscriptionId);
     }
 }

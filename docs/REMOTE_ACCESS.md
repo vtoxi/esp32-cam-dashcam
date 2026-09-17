@@ -112,13 +112,29 @@ backend, would need a shared broker (Redis, etc.) for a real multi-instance
 deployment (docs/BACKEND.md's "avoid unnecessary infrastructure until there's a
 second instance to justify it").
 
-## 6. Webhooks
+## 6. Webhooks — implemented (Phase 21.9)
 
 Entirely backend-side (Section 15 of the brief) — delivery, retry, signing, and
-subscription management all belong to the backend project (Phase 21.5+/21.9), not the
-Gateway. The Gateway's only involvement is being the source of the events
+subscription management all belong to the backend project, not the Gateway. The
+Gateway's only involvement is being the source of the events
 (`device.online`/`motion.detected`/etc.) that the backend turns into webhook
 deliveries once it receives them via `RemoteSyncManager`.
+
+`WebhookDispatcher` attaches to `EventBroadcaster.OnEvent` once at startup — the same
+publish call that feeds Section 5's SSE stream also feeds webhook delivery, no
+endpoint code duplicated between the two. `POST /api/v1/webhooks` (admin-key gated,
+same posture as issuing a remote command) creates a subscription (`url`, optional
+`eventTypes` filter or `"*"`) and returns a server-generated HMAC-SHA256 secret
+exactly once. Each matching event is POSTed to the subscriber's URL with
+`X-CarSentinel-Signature: sha256=<hex hmac over the raw body>`; one retry on
+failure/timeout; every attempt (success or failure, with status code) is logged to
+`WebhookDelivery` and readable via `GET /api/v1/webhooks/{id}/deliveries`.
+
+Known limitation, documented rather than hidden: delivery is at-most-two-attempts,
+not a persisted retry queue — a receiver unreachable for longer than the single retry
+window simply misses that event. A future revision could route failed deliveries
+through the same kind of bounded persisted queue `BackendQueue` already uses for
+Gateway→Backend traffic, if that becomes necessary.
 
 ## 7. Security / trust boundaries
 

@@ -29,7 +29,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 18 | Vehicle Integration | Compiles clean (both envs) — capability-gated ignition-sense input drives DRIVING/PARKED when wired; OBD-II/CAN blocked on hardware, not yet started |
 | 19 | Dashboard | Compiles clean (both envs) — gateway-hosted single-page dashboard + JSON API + live camera stream proxy; pending physical bench test |
 | 20 | Vehicle Installation | Planning checklist documented (`docs/wiring/VEHICLE_INSTALLATION.md`) — no firmware component, no physical install has happened |
-| 21 | Remote Backend, API & Hybrid Connectivity | 21.1–21.8 complete: architecture audit, gateway-side backend abstraction, persistent retry queue, device registration/auth, a real ASP.NET Core reference backend (`backend/`), SSE real-time stream, end-to-end evidence upload, and a Backend→Gateway command flow (one real command, SECURITY_MODE, wired end to end). Gateway firmware itself still not bench-tested against a live server. 21.9 onward not started |
+| 21 | Remote Backend, API & Hybrid Connectivity | 21.1–21.9 complete: architecture audit, gateway-side backend abstraction, persistent retry queue, device registration/auth, a real ASP.NET Core reference backend (`backend/`), SSE real-time stream, end-to-end evidence upload, a Backend→Gateway command flow (one real command, SECURITY_MODE, wired end to end), and outbound webhooks (admin-managed subscriptions, HMAC-signed delivery, retry, logging). Gateway firmware itself still not bench-tested against a live server. 21.10–21.11 not started |
 
 ## Phase 0 — Repository & Hardware Discovery
 
@@ -1685,10 +1685,64 @@ real hardware polling a real backend.
 **Build status: both environments compile clean** (gateway Flash 21.1%, node
 unaffected — all Phase 21.8 code is gateway-only).
 
+## Phase 21.9 — Webhooks (complete)
+
+**External event integrations** — outbound HTTP push to third-party subscribers,
+reusing the exact event taxonomy `EventBroadcaster`'s SSE stream already established
+in Phase 21.6 (`device.heartbeat`, `device.online`, `telemetry`, `motion.detected`,
+`incident.created`/`incident.updated`, `evidence.uploaded`, `command.issued`/
+`command.executed`/`command.failed`).
+
+**`EventBroadcaster`** gained a plain C# event, `OnEvent`, invoked at the end of
+`Publish()` right after the existing SSE fan-out — `WebhookDispatcher` attaches to
+it once at startup (`Program.cs`) rather than any endpoint code calling it directly,
+so none of the four existing `Publish()` call sites in `IngestEndpoints`/
+`CommandEndpoints` needed to change.
+
+**`WebhookSubscription`** (`Url`, comma-separated `EventTypes` or `"*"`, a
+server-generated plaintext `Secret`, `Enabled`) and **`WebhookDelivery`** (one row
+per delivery attempt: `SubscriptionId`, `EventType`, `Success`, `StatusCode`,
+`AttemptedAt`) — new models, new `DbSet`s. `Secret` is deliberately plaintext, not
+hashed like `Device.CredentialHash`: this backend is the party *proving* authenticity
+to the receiving webhook endpoint (computing an outgoing HMAC needs the plaintext
+secret), the reverse of verifying an incoming device credential.
+
+**`WebhookDispatcher`**: for every event, finds enabled subscriptions whose
+`EventTypes` match (`"*"` or a literal match), and for each one POSTs the same JSON
+envelope SSE clients receive, signed with `X-CarSentinel-Signature: sha256=<hex
+HMAC-SHA256 over the raw body, keyed by the subscription's secret>` — the same
+GitHub/Stripe-style signature convention a receiver can verify by recomputing it.
+One retry (1s delay) on failure/non-2xx/timeout (10s timeout per attempt); every
+attempt, success or failure, is logged to `WebhookDelivery`. Runs on its own
+fire-and-forget `Task` per event (own DI scope) so `Publish()` itself stays
+synchronous.
+
+**`WebhookEndpoints`** (`/api/v1/webhooks`), admin-key gated exactly like
+`CommandEndpoints`' issue route (`X-Admin-Key` vs. `Admin:ApiKey` config, locked by
+default): `POST /` creates a subscription and returns the generated secret exactly
+once (never returned again — the caller must store it), `GET /` lists subscriptions
+(secret omitted), `DELETE /{id}` removes one, `GET /{id}/deliveries` returns recent
+delivery attempts for debugging.
+
+**Verified by actually running it**: started the backend with `Admin:ApiKey` set,
+created a subscription pointed at the backend's own `GET /api/v1/health` endpoint
+(no external webhook receiver available in this environment), then registered a
+device and sent a heartbeat to trigger a real `device.heartbeat` publish. Confirmed
+via `GET /{id}/deliveries`: two logged attempts (initial + the one retry), each a
+real HTTP POST that reached `/api/v1/health` and got a real `405` back (that route
+only accepts GET) — proving the dispatch, signature computation, and delivery
+logging all actually executed, not just built. Also verified: unauthenticated
+`POST /` → 401, list/delete work, and deleting the subscription stops further
+delivery attempts.
+
+**Build status: both environments unaffected** (all Phase 21.9 code is
+backend-only, no firmware changes this sub-phase).
+
 ## Next Step
 
-Phase 21.9 (Webhooks) — external event integrations
-(`device.online`/`motion.detected`/`incident.created`/etc., reusing the same event
-taxonomy `EventBroadcaster`'s SSE stream already established in Phase 21.6).
-Everything else in the project remains independent of Phase 21 and can still be
-bench-tested in the meantime — Phase 21 stays purely additive.
+Phase 21.10 (API Documentation) — finalize/expand the Swagger/OpenAPI surface and
+write a standalone `docs/API.md` with example requests for every endpoint shipped
+across 21.2–21.9, then Phase 21.11 (End-to-End Testing) to document/execute whatever
+test matrix is achievable without physical ESP32 hardware. Everything else in the
+project remains independent of Phase 21 and can still be bench-tested in the
+meantime — Phase 21 stays purely additive.

@@ -54,6 +54,13 @@ assigns. See `RemoteSyncManager.cpp`'s `attemptRegistration()` for exactly what 
   a device can only ever poll its own commands) and `POST
   .../commands/{commandId}/result` are what the gateway calls. `GET
   /api/v1/devices/{id}/commands` lists history (any status).
+- `POST /api/v1/webhooks` — create a subscription (`X-Admin-Key` gated, same as
+  commands above); returns a server-generated HMAC secret exactly once. `GET
+  /api/v1/webhooks` lists subscriptions, `DELETE /api/v1/webhooks/{id}` removes one,
+  `GET /api/v1/webhooks/{id}/deliveries` shows recent delivery attempts. Every event
+  published for SSE (see above) is also POSTed to every enabled, matching
+  subscription, signed with `X-CarSentinel-Signature: sha256=<hex HMAC-SHA256 of the
+  body>`, one retry on failure, every attempt logged.
 
 ## What's not here yet (see `docs/IMPLEMENTATION_PLAN.md`'s Phase 21 entries)
 
@@ -64,4 +71,5 @@ heartbeat arriving after a gap, doesn't detect one that stops), no evidence sync
 filtering (every evidenced image uploads whenever the backend is enabled, not filtered
 by `METADATA_ONLY`/etc.), only one real command type wired up on the firmware side
 (`SECURITY_MODE` — others need a matching `else if` in `gateway_main.cpp`'s
-`handleRemoteCommand()`), no webhooks (Phase 21.9).
+`handleRemoteCommand()`), webhook delivery is at-most-two-attempts (no persisted
+retry queue beyond that — a receiver down for longer than one retry misses the event).

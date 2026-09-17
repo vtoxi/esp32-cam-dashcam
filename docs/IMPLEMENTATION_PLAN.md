@@ -30,6 +30,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 19 | Dashboard | Compiles clean (both envs) — gateway-hosted single-page dashboard + JSON API + live camera stream proxy; pending physical bench test |
 | 20 | Vehicle Installation | Planning checklist documented (`docs/wiring/VEHICLE_INSTALLATION.md`) — no firmware component, no physical install has happened |
 | 21 | Remote Backend, API & Hybrid Connectivity | **Complete (21.1–21.11)**: architecture audit, gateway-side backend abstraction, persistent retry queue, device registration/auth, a real ASP.NET Core reference backend (`backend/`), SSE real-time stream, end-to-end evidence upload, a Backend→Gateway command flow (one real command, SECURITY_MODE, wired end to end), outbound webhooks (admin-managed subscriptions, HMAC-signed delivery, retry, logging), a standalone API reference doc (`docs/API.md`), and a consolidated test matrix (`docs/TESTING.md`). Entirely optional and backward-compatible — every gateway/node still works fully standalone with it disabled. Backend independently curl-verified end to end; gateway firmware side of the flow not yet bench-tested against a live server (no hardware available) |
+| 22 | Frontend Console | **Complete**: Angular 22 + Tailwind CSS 3 operator console (`frontend/`) consuming the Phase 21 backend — dashboard, devices, telemetry, events, incidents (with evidence gallery), commands, webhooks, live activity, settings. Generic reusable data table (search/sort/pagination) and a shared component library used across every page. Verified end to end with a running backend + headless browser: every route renders error-free, table search/filter works, full webhook-create flow works against the live admin-gated API. `ng build` and backend `dotnet build` both succeed clean |
 
 ## Phase 0 — Repository & Hardware Discovery
 
@@ -1790,10 +1791,69 @@ against real ESP32 hardware talking to a live backend, tracked explicitly in
 
 **Build status: no code changes this sub-phase** (documentation only).
 
+## Phase 22 — Frontend Console (complete)
+
+**A reference Angular operator console** (`frontend/`) for the Phase 21 remote
+backend — requested directly by the user rather than a numbered sub-phase of the
+original Phase 21 brief, so it's tracked here as its own phase. Angular 22,
+standalone components, zoneless change detection, Tailwind CSS 3 as the design
+system (no Angular Material/CDK, per explicit direction). Entirely optional, like
+the backend it consumes — nothing in firmware or backend depends on it.
+
+**Pages, one per backend capability**: Dashboard (fleet health + live feed), Devices
+(list + detail with Overview/Telemetry/Events/Incidents/Commands tabs), Telemetry,
+Events, Incidents (list + detail with an evidence gallery/lightbox/download),
+Commands (device-scoped issue + history, admin-key gated), Webhooks (full CRUD +
+delivery history, admin-key gated), Live Activity (raw SSE feed, filterable by event
+type), Settings (API base URL override, admin key, connection test).
+
+**Reusable component library** (`shared/components/`): a generic, signal-driven
+`DataTableComponent<T>` — client-side search, sortable columns, and pagination
+implemented once and used by every list page (devices, telemetry, events, incidents,
+commands, webhooks), with per-column custom cell rendering opted into via
+`<ng-template appCellTemplate="key" let-row>` rather than the table knowing about
+any specific feature. Also: `status-badge` (consistent color-coding for every
+status-like value app-wide), `json-viewer` (collapsible pretty-printed JSON for
+every opaque `payloadJson`/`resultJson` field the backend passes through), a
+hand-rolled `dialog.service` (Angular's own `createComponent` API, not a CDK
+overlay) + `dialog-shell` used by every modal (confirm, issue command, create
+webhook, view deliveries), a global toast system wired to an HTTP error
+interceptor (no feature code writes its own error-toast boilerplate), plus
+`device-picker`, `copy-field` (one-time secrets/credentials), `stat-card`,
+`page-header`, `empty-state`, and a small inline-SVG `icon` component (no icon
+font/library dependency).
+
+**Backend change required for this phase**: added CORS (`Program.cs`, permissive —
+matches the backend's existing no-user-account reference posture, tightened before
+a real deployment) so a separately-hosted build of the console can reach the backend
+directly, not only through the dev-server proxy (`frontend/proxy.conf.json`) used
+during `ng serve`.
+
+**Verified by actually running it**: started both the backend and `ng serve`,
+seeded real data via curl (register → heartbeat → telemetry → event → incident →
+evidence upload), then drove the app with a headless browser (Playwright, used only
+as a one-off verification tool for this session — not added as a project
+dependency): every route rendered with zero console/page errors; the devices table's
+search box correctly filtered rows to zero on a non-matching query; the full
+"create webhook subscription" flow worked end to end (dialog → POST → secret shown
+exactly once → list refreshed) against the live admin-key-gated endpoint; a
+production `ng build` completes clean.
+
+**Not built, documented rather than hidden**: no unit/e2e test suite (no testing
+framework wired into the project — `ng test`/`ng e2e` are scaffold defaults only),
+no multi-tenant/user-account UI (matches the backend's own current scope), evidence
+files are rendered only when `contentType` starts with `image/` (a non-image
+evidence type gets a download-only tile).
+
+**Build status: `ng build` succeeds clean; backend `dotnet build` succeeds clean
+after the CORS addition.**
+
 ## Next Step
 
-Phase 21 is complete. No further sub-phases are defined by the Phase 21 brief.
-Remaining project-wide work is what it was before Phase 21 began: physical
-bench-testing of Phases 1–20 (tracked per-phase in the status table above) and,
-whenever real ESP32 gateway/node hardware is available, bench-verifying the Phase 21
-flows currently listed as firmware-side "Not tested" in `docs/TESTING.md` Section 4.
+Both the Phase 21 remote backend and its Phase 22 console are complete and
+independently verified. Remaining project-wide work: physical bench-testing of
+Phases 1–20 (tracked per-phase in the status table above), and, whenever real ESP32
+gateway/node hardware is available, bench-verifying the Phase 21 flows currently
+listed as firmware-side "Not tested" in `docs/TESTING.md` Section 4 — the console
+built in Phase 22 is exactly the tool to observe those flows against once that
+hardware pairing exists.

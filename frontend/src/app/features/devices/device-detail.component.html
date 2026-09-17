@@ -1,0 +1,171 @@
+@if (loadingDevice()) {
+  <div class="flex justify-center py-24">
+    <div class="w-8 h-8 rounded-full border-2 border-brand-400/30 border-t-brand-400 animate-spin"></div>
+  </div>
+} @else if (notFound()) {
+  <div class="text-center py-24">
+    <p class="text-slate-300 font-medium">Device not found.</p>
+    <p class="text-sm text-slate-500 mt-1">{{ id }} isn't registered with this backend.</p>
+  </div>
+} @else if (device(); as d) {
+  <app-page-header [title]="d.id" subtitle="Device details, telemetry, events, incidents, and remote commands." icon="device-phone">
+    <button
+      type="button"
+      class="focus-ring flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-semibold bg-brand-600 hover:bg-brand-500 text-white"
+      (click)="issueCommand()"
+    >
+      <app-icon name="terminal" class="w-4 h-4" />
+      Issue command
+    </button>
+  </app-page-header>
+
+  <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    <div class="rounded-xl border border-white/5 bg-surface-400/60 p-4">
+      <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Hardware</p>
+      <p class="text-sm font-medium text-slate-200">{{ d.hardwareProfile || '—' }}</p>
+    </div>
+    <div class="rounded-xl border border-white/5 bg-surface-400/60 p-4">
+      <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Firmware</p>
+      <p class="text-sm font-medium text-slate-200">{{ d.firmwareVersion || '—' }}</p>
+    </div>
+    <div class="rounded-xl border border-white/5 bg-surface-400/60 p-4">
+      <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Node ID</p>
+      <p class="text-sm font-medium text-slate-200">{{ d.nodeId || '—' }}</p>
+    </div>
+    <div class="rounded-xl border border-white/5 bg-surface-400/60 p-4">
+      <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Last Seen</p>
+      <p class="text-sm font-medium text-slate-200" [title]="d.lastSeenAt">{{ d.lastSeenAt | relativeTime }}</p>
+    </div>
+  </div>
+
+  <div class="border-b border-white/10 flex items-center gap-1 mb-5 overflow-x-auto">
+    @for (tab of [
+      { id: 'overview', label: 'Overview', icon: 'squares-2x2' },
+      { id: 'telemetry', label: 'Telemetry', icon: 'signal' },
+      { id: 'events', label: 'Events', icon: 'bell-alert' },
+      { id: 'incidents', label: 'Incidents', icon: 'exclamation-triangle' },
+      { id: 'commands', label: 'Commands', icon: 'terminal' }
+    ]; track tab.id) {
+      <button
+        type="button"
+        class="focus-ring flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors"
+        [class]="activeTab() === tab.id ? 'border-brand-400 text-brand-300' : 'border-transparent text-slate-400 hover:text-slate-200'"
+        (click)="selectTab($any(tab.id))"
+      >
+        <app-icon [name]="tab.icon" class="w-4 h-4" />
+        {{ tab.label }}
+      </button>
+    }
+  </div>
+
+  @if (activeTab() === 'overview') {
+    <div class="rounded-2xl border border-white/5 bg-surface-400/60 p-6 shadow-panel">
+      <dl class="grid sm:grid-cols-2 gap-x-8 gap-y-4 text-sm">
+        <div><dt class="text-slate-500 mb-0.5">Device ID</dt><dd class="text-slate-200 font-mono">{{ d.id }}</dd></div>
+        <div><dt class="text-slate-500 mb-0.5">Tenant</dt><dd class="text-slate-200">{{ d.tenantId || '— (single-tenant reference deployment)' }}</dd></div>
+        <div><dt class="text-slate-500 mb-0.5">Registered</dt><dd class="text-slate-200" [title]="d.registeredAt">{{ d.registeredAt | relativeTime }}</dd></div>
+        <div><dt class="text-slate-500 mb-0.5">Last Seen</dt><dd class="text-slate-200" [title]="d.lastSeenAt">{{ d.lastSeenAt | relativeTime }}</dd></div>
+      </dl>
+    </div>
+  }
+
+  @if (activeTab() === 'telemetry') {
+    <div class="rounded-2xl border border-white/5 bg-surface-400/60 p-5 shadow-panel">
+      <app-data-table
+        [columns]="telemetryColumns"
+        [rows]="telemetry()"
+        [loading]="telemetryLoading()"
+        searchPlaceholder="Search telemetry payloads…"
+        emptyMessage="No telemetry received from this device yet."
+        emptyIcon="signal"
+        [rowKey]="telemetryRowKey"
+      >
+        <ng-template appCellTemplate="receivedAt" let-row>
+          <span [title]="row.receivedAt">{{ row.receivedAt | relativeTime }}</span>
+        </ng-template>
+        <ng-template appCellTemplate="payloadJson" let-row>
+          <app-json-viewer [json]="row.payloadJson" />
+        </ng-template>
+      </app-data-table>
+    </div>
+  }
+
+  @if (activeTab() === 'events') {
+    <div class="rounded-2xl border border-white/5 bg-surface-400/60 p-5 shadow-panel">
+      <app-data-table
+        [columns]="eventColumns"
+        [rows]="events()"
+        [loading]="eventsLoading()"
+        searchPlaceholder="Search event payloads…"
+        emptyMessage="No events reported by this device yet."
+        emptyIcon="bell-alert"
+        [rowKey]="eventRowKey"
+      >
+        <ng-template appCellTemplate="receivedAt" let-row>
+          <span [title]="row.receivedAt">{{ row.receivedAt | relativeTime }}</span>
+        </ng-template>
+        <ng-template appCellTemplate="payloadJson" let-row>
+          <app-json-viewer [json]="row.payloadJson" />
+        </ng-template>
+      </app-data-table>
+    </div>
+  }
+
+  @if (activeTab() === 'incidents') {
+    <div class="rounded-2xl border border-white/5 bg-surface-400/60 p-5 shadow-panel">
+      <app-data-table
+        [columns]="incidentColumns"
+        [rows]="incidents()"
+        [loading]="incidentsLoading()"
+        searchPlaceholder="Search incidents…"
+        emptyMessage="No incidents recorded for this device."
+        emptyIcon="exclamation-triangle"
+        [rowKey]="incidentRowKey"
+      >
+        <ng-template appCellTemplate="incidentId" let-row>
+          <button
+            type="button"
+            class="focus-ring text-brand-300 hover:text-brand-200 font-mono text-sm hover:underline"
+            (click)="openIncident(row.incidentId)"
+          >
+            {{ row.incidentId }}
+          </button>
+        </ng-template>
+        <ng-template appCellTemplate="state" let-row>
+          <app-status-badge [value]="row.state" />
+        </ng-template>
+        <ng-template appCellTemplate="firstReceivedAt" let-row>
+          <span [title]="row.firstReceivedAt">{{ row.firstReceivedAt | relativeTime }}</span>
+        </ng-template>
+        <ng-template appCellTemplate="lastReceivedAt" let-row>
+          <span [title]="row.lastReceivedAt">{{ row.lastReceivedAt | relativeTime }}</span>
+        </ng-template>
+      </app-data-table>
+    </div>
+  }
+
+  @if (activeTab() === 'commands') {
+    <div class="rounded-2xl border border-white/5 bg-surface-400/60 p-5 shadow-panel">
+      <app-data-table
+        [columns]="commandColumns"
+        [rows]="commands()"
+        [loading]="commandsLoading()"
+        searchPlaceholder="Search command history…"
+        emptyMessage="No commands issued to this device yet."
+        emptyIcon="terminal"
+        emptyHint="Use 'Issue command' above — requires an admin key (Settings)."
+        [rowKey]="commandRowKey"
+      >
+        <ng-template appCellTemplate="status" let-row>
+          <app-status-badge [value]="row.status" />
+        </ng-template>
+        <ng-template appCellTemplate="issuedAt" let-row>
+          <span [title]="row.issuedAt">{{ row.issuedAt | relativeTime }}</span>
+        </ng-template>
+        <ng-template appCellTemplate="completedAt" let-row>
+          <span [title]="row.completedAt ?? ''">{{ row.completedAt ? (row.completedAt | relativeTime) : '—' }}</span>
+        </ng-template>
+      </app-data-table>
+    </div>
+  }
+}

@@ -1,0 +1,89 @@
+@if (loading()) {
+  <div class="flex justify-center py-24">
+    <div class="w-8 h-8 rounded-full border-2 border-brand-400/30 border-t-brand-400 animate-spin"></div>
+  </div>
+} @else if (notFound()) {
+  <div class="text-center py-24">
+    <p class="text-slate-300 font-medium">Incident not found.</p>
+    <p class="text-sm text-slate-500 mt-1">{{ id }} doesn't exist on this backend.</p>
+  </div>
+} @else if (incident(); as inc) {
+  <app-page-header [title]="inc.incidentId" subtitle="Incident detail and captured evidence." icon="exclamation-triangle">
+    <app-status-badge [value]="inc.state" class="mr-1" />
+  </app-page-header>
+
+  <div class="grid lg:grid-cols-3 gap-6">
+    <div class="lg:col-span-2 flex flex-col gap-6">
+      <section class="rounded-2xl border border-white/5 bg-surface-400/60 p-6 shadow-panel">
+        <h2 class="font-semibold text-white mb-4">Evidence</h2>
+        @if (evidenceLoading()) {
+          <div class="flex justify-center py-10">
+            <div class="w-6 h-6 rounded-full border-2 border-brand-400/30 border-t-brand-400 animate-spin"></div>
+          </div>
+        } @else if (evidence().length === 0) {
+          <app-empty-state icon="camera" message="No evidence uploaded for this incident." hint="Uploaded by the gateway via POST /incidents/{id}/evidence as node images become available." />
+        } @else {
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            @for (item of evidence(); track item.id) {
+              <button
+                type="button"
+                class="focus-ring group relative aspect-video rounded-lg overflow-hidden border border-white/10 bg-surface-200/60"
+                (click)="isImage(item.contentType) ? openLightbox(item) : null"
+              >
+                @if (isImage(item.contentType)) {
+                  <img [src]="fileUrl(item.id)" [alt]="'Evidence from ' + item.nodeId" class="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                } @else {
+                  <div class="w-full h-full flex items-center justify-center text-slate-500">
+                    <app-icon name="document-arrow-down" class="w-8 h-8" />
+                  </div>
+                }
+                <div class="absolute inset-x-0 bottom-0 bg-black/70 px-2 py-1 text-[10px] text-slate-200 flex items-center justify-between">
+                  <span class="truncate">{{ item.nodeId }}</span>
+                  <span>{{ item.sizeBytes | bytes }}</span>
+                </div>
+              </button>
+            }
+          </div>
+        }
+      </section>
+
+      <section class="rounded-2xl border border-white/5 bg-surface-400/60 p-6 shadow-panel">
+        <h2 class="font-semibold text-white mb-3">Payload</h2>
+        <app-json-viewer [json]="inc.payloadJson" />
+      </section>
+    </div>
+
+    <div class="flex flex-col gap-6">
+      <section class="rounded-2xl border border-white/5 bg-surface-400/60 p-6 shadow-panel">
+        <h2 class="font-semibold text-white mb-4">Details</h2>
+        <dl class="flex flex-col gap-3 text-sm">
+          <div><dt class="text-slate-500 mb-0.5">Device</dt><dd><a class="text-brand-300 hover:underline font-mono" [routerLink]="['/devices', inc.deviceId]">{{ inc.deviceId }}</a></dd></div>
+          <div><dt class="text-slate-500 mb-0.5">State</dt><dd><app-status-badge [value]="inc.state" /></dd></div>
+          <div><dt class="text-slate-500 mb-0.5">First Seen</dt><dd class="text-slate-200" [title]="inc.firstReceivedAt">{{ inc.firstReceivedAt | relativeTime }}</dd></div>
+          <div><dt class="text-slate-500 mb-0.5">Last Update</dt><dd class="text-slate-200" [title]="inc.lastReceivedAt">{{ inc.lastReceivedAt | relativeTime }}</dd></div>
+          <div><dt class="text-slate-500 mb-0.5">Evidence Count</dt><dd class="text-slate-200">{{ evidence().length }}</dd></div>
+        </dl>
+      </section>
+    </div>
+  </div>
+
+  @if (lightboxItem(); as item) {
+    <div class="fixed inset-0 z-[95] flex items-center justify-center p-6" (click)="closeLightbox()">
+      <div class="absolute inset-0 bg-black/85"></div>
+      <div class="relative max-w-4xl w-full">
+        <img [src]="fileUrl(item.id)" [alt]="'Evidence from ' + item.nodeId" class="w-full max-h-[80vh] object-contain rounded-lg" />
+        <div class="flex items-center justify-between mt-3 text-sm text-slate-300">
+          <span>{{ item.nodeId }} · {{ item.eventId }} · {{ item.sizeBytes | bytes }}</span>
+          <div class="flex items-center gap-3">
+            <a [href]="fileUrl(item.id)" download class="focus-ring flex items-center gap-1.5 text-brand-300 hover:text-brand-200" (click)="$event.stopPropagation()">
+              <app-icon name="document-arrow-down" class="w-4 h-4" /> Download
+            </a>
+            <button type="button" class="focus-ring text-slate-400 hover:text-white" (click)="closeLightbox()">
+              <app-icon name="x-mark" class="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  }
+}

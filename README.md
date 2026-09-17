@@ -209,6 +209,14 @@ backend, since no physical hardware pairing has been available during developmen
 [docs/BACKEND.md](docs/BACKEND.md), [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md),
 and [docs/API.md](docs/API.md).
 
+A reference operator console for that backend exists at [`frontend/`](frontend/) —
+Angular 22 + Tailwind CSS 3, no Angular Material/CDK. Devices, telemetry, events,
+incidents (with an evidence gallery), remote commands, webhooks, and a live
+Server-Sent Events activity feed, all built on one reusable data table component
+(search, sort, pagination) and a small shared component library. Entirely optional,
+like the backend it consumes. Run it (`cd frontend && npm install && ng serve`,
+alongside the backend) — see [frontend/README.md](frontend/README.md).
+
 ## Security
 
 ESP-NOW messages are HMAC-SHA256 signed and sequence-numbered (bounded replay

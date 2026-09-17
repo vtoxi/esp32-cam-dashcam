@@ -1,0 +1,78 @@
+<app-dialog-shell title="Create webhook subscription" maxWidthClass="max-w-lg" (dismiss)="dialogRef.close(false)">
+  @if (created(); as result) {
+    <div class="flex items-start gap-2.5 rounded-lg border border-emerald-400/30 bg-emerald-400/10 px-3.5 py-3 mb-4 text-sm text-emerald-300">
+      <app-icon name="check" class="w-4 h-4 mt-0.5 shrink-0" />
+      <span>Subscription created. Copy the secret now — it will not be shown again.</span>
+    </div>
+    <div class="flex flex-col gap-3 text-sm">
+      <div>
+        <p class="text-xs text-slate-500 mb-1">Signing secret</p>
+        <app-copy-field [value]="result.secret" />
+      </div>
+      <div>
+        <p class="text-xs text-slate-500 mb-1">Subscribed to</p>
+        <p class="text-slate-200 font-mono text-xs">{{ result.eventTypes }}</p>
+      </div>
+    </div>
+    <div class="flex justify-end mt-6">
+      <button type="button" class="focus-ring px-4 py-2 rounded-lg text-sm font-semibold bg-brand-600 hover:bg-brand-500 text-white" (click)="done()">
+        Done
+      </button>
+    </div>
+  } @else {
+    <div class="flex flex-col gap-4">
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1.5">Target URL</label>
+        <input
+          type="url"
+          class="focus-ring w-full rounded-lg border border-white/10 bg-surface-200/60 px-3 py-2 text-sm text-slate-200 font-mono"
+          [(ngModel)]="url"
+          placeholder="https://example.com/carsentinel-hook"
+        />
+      </div>
+
+      <div>
+        <label class="flex items-center gap-2 text-sm text-slate-300 mb-2">
+          <input type="checkbox" class="rounded border-white/20 bg-surface-200 text-brand-500 focus-ring" [(ngModel)]="allEvents" />
+          Subscribe to all event types
+        </label>
+        @if (!allEvents) {
+          <div class="grid grid-cols-2 gap-1.5 rounded-lg border border-white/10 p-3 max-h-48 overflow-y-auto">
+            @for (type of knownEventTypes; track type) {
+              <label class="flex items-center gap-2 text-xs text-slate-300">
+                <input
+                  type="checkbox"
+                  class="rounded border-white/20 bg-surface-200 text-brand-500 focus-ring"
+                  [checked]="selectedTypes.has(type)"
+                  (change)="toggleType(type)"
+                />
+                {{ type }}
+              </label>
+            }
+          </div>
+        }
+      </div>
+
+      @if (error()) {
+        <p class="text-sm text-rose-400">{{ error() }}</p>
+      }
+
+      <div class="flex items-center justify-end gap-2 mt-1">
+        <button type="button" class="focus-ring px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-white/5" (click)="dialogRef.close(false)">
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="focus-ring flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-50"
+          [disabled]="submitting()"
+          (click)="submit()"
+        >
+          @if (submitting()) {
+            <span class="w-3.5 h-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin"></span>
+          }
+          Create
+        </button>
+      </div>
+    </div>
+  }
+</app-dialog-shell>

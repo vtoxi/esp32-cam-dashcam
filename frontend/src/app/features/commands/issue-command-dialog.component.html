@@ -1,0 +1,101 @@
+<app-dialog-shell title="Issue remote command" maxWidthClass="max-w-lg" (dismiss)="dialogRef.close(false)">
+  @if (!admin.hasKey()) {
+    <div class="flex items-start gap-2.5 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3.5 py-3 mb-4 text-sm text-amber-300">
+      <app-icon name="exclamation-triangle" class="w-4 h-4 mt-0.5 shrink-0" />
+      <span>No admin key is set — issuing will fail with 401/503. Set one in Settings first.</span>
+    </div>
+  }
+
+  <p class="text-xs text-slate-500 mb-4">
+    Target device <code class="text-slate-300 bg-surface-200/70 px-1.5 py-0.5 rounded">{{ deviceId }}</code>
+  </p>
+
+  <div class="flex flex-col gap-4">
+    <div>
+      <label class="block text-xs font-medium text-slate-400 mb-1.5">Command type</label>
+      <select
+        class="focus-ring w-full rounded-lg border border-white/10 bg-surface-200/60 px-3 py-2 text-sm text-slate-200"
+        [(ngModel)]="commandType"
+      >
+        @for (t of knownTypes; track t) {
+          <option [value]="t">{{ t }} (wired on gateway)</option>
+        }
+        <option value="__custom__">Custom…</option>
+      </select>
+    </div>
+
+    @if (commandType === '__custom__') {
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1.5">Custom command type</label>
+        <input
+          type="text"
+          class="focus-ring w-full rounded-lg border border-white/10 bg-surface-200/60 px-3 py-2 text-sm text-slate-200 font-mono"
+          [(ngModel)]="customType"
+          placeholder="e.g. SNAPSHOT_REQUEST"
+        />
+        <p class="text-xs text-slate-500 mt-1.5">
+          Accepted by the backend, but only SECURITY_MODE has a matching handler on the gateway today — see
+          backend/README.md.
+        </p>
+      </div>
+    }
+
+    @if (effectiveType === 'SECURITY_MODE') {
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1.5">Mode</label>
+        <select
+          class="focus-ring w-full rounded-lg border border-white/10 bg-surface-200/60 px-3 py-2 text-sm text-slate-200"
+          [(ngModel)]="securityMode"
+        >
+          @for (m of securityModes; track m) {
+            <option [value]="m">{{ m }}</option>
+          }
+        </select>
+      </div>
+    } @else {
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1.5">Payload (JSON)</label>
+        <textarea
+          class="focus-ring w-full rounded-lg border border-white/10 bg-surface-200/60 px-3 py-2 text-sm text-slate-200 font-mono resize-y min-h-[90px]"
+          [(ngModel)]="payloadDraft"
+        ></textarea>
+      </div>
+    }
+
+    <div>
+      <label class="block text-xs font-medium text-slate-400 mb-1.5">Expires after (seconds)</label>
+      <input
+        type="number"
+        min="10"
+        max="3600"
+        class="focus-ring w-full rounded-lg border border-white/10 bg-surface-200/60 px-3 py-2 text-sm text-slate-200"
+        [(ngModel)]="ttlSeconds"
+      />
+    </div>
+
+    @if (error()) {
+      <p class="text-sm text-rose-400">{{ error() }}</p>
+    }
+
+    <div class="flex items-center justify-end gap-2 mt-1">
+      <button
+        type="button"
+        class="focus-ring px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-white/5"
+        (click)="dialogRef.close(false)"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="focus-ring flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-50"
+        [disabled]="submitting()"
+        (click)="submit()"
+      >
+        @if (submitting()) {
+          <span class="w-3.5 h-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin"></span>
+        }
+        Issue command
+      </button>
+    </div>
+  </div>
+</app-dialog-shell>

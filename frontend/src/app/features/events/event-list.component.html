@@ -1,0 +1,33 @@
+<app-page-header title="Events" subtitle="Motion and sensor events relayed by every gateway." icon="bell-alert">
+  <app-device-picker [value]="selectedDevice()" (valueChange)="onDeviceChange($event)" />
+  <button
+    type="button"
+    class="focus-ring flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium border border-white/10 text-slate-300 hover:bg-white/5"
+    (click)="load()"
+  >
+    <app-icon name="arrow-path" class="w-4 h-4" />
+    Refresh
+  </button>
+</app-page-header>
+
+<div class="rounded-2xl border border-white/5 bg-surface-400/60 p-5 shadow-panel">
+  <app-data-table
+    [columns]="columns"
+    [rows]="rows()"
+    [loading]="loading()"
+    searchPlaceholder="Search events…"
+    emptyMessage="No events recorded yet."
+    emptyIcon="bell-alert"
+    [rowKey]="rowKeyFn"
+  >
+    <ng-template appCellTemplate="deviceId" let-row>
+      <a class="text-brand-300 hover:underline font-mono text-xs" [routerLink]="['/devices', row.deviceId]">{{ row.deviceId }}</a>
+    </ng-template>
+    <ng-template appCellTemplate="receivedAt" let-row>
+      <span [title]="row.receivedAt">{{ row.receivedAt | relativeTime }}</span>
+    </ng-template>
+    <ng-template appCellTemplate="payloadJson" let-row>
+      <app-json-viewer [json]="row.payloadJson" />
+    </ng-template>
+  </app-data-table>
+</div>

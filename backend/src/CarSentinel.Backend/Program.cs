@@ -23,6 +23,23 @@ builder.Services.AddSingleton<EvidenceStorage>();
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<WebhookDispatcher>();
 
+// Phase 22 — the Angular console (frontend/) runs on its own origin
+// (ng serve's localhost:4200, or wherever a production build is hosted) and
+// talks to this API directly when not proxied. Wide open (any origin, any
+// header) matches this backend's existing reference-implementation posture —
+// no user-account/session/cookie model exists (docs/BACKEND.md's
+// multi-tenant-readiness note), so there's no session state a permissive CORS
+// policy could leak; the real access controls are the device-credential and
+// admin-key checks already on every mutating endpoint, which a browser
+// origin can't bypass. Tighten this to specific origins before a real
+// deployment.
+const string ConsoleCorsPolicy = "console";
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(ConsoleCorsPolicy, policy =>
+        policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+});
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -62,6 +79,7 @@ app.UseSwaggerUI(c =>
     c.SwaggerEndpoint("/swagger/v1/swagger.json", "CarSentinel Backend API v1");
 });
 
+app.UseCors(ConsoleCorsPolicy);
 app.UseAuthentication();
 app.UseAuthorization();
 

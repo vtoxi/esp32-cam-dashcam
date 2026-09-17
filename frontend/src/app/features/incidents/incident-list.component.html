@@ -1,0 +1,41 @@
+<app-page-header title="Incidents" subtitle="Security incidents, upserted by ID as they move through their lifecycle." icon="exclamation-triangle">
+  <app-device-picker [value]="selectedDevice()" (valueChange)="onDeviceChange($event)" />
+  <button
+    type="button"
+    class="focus-ring flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium border border-white/10 text-slate-300 hover:bg-white/5"
+    (click)="load()"
+  >
+    <app-icon name="arrow-path" class="w-4 h-4" />
+    Refresh
+  </button>
+</app-page-header>
+
+<div class="rounded-2xl border border-white/5 bg-surface-400/60 p-5 shadow-panel">
+  <app-data-table
+    [columns]="columns"
+    [rows]="rows()"
+    [loading]="loading()"
+    searchPlaceholder="Search incidents…"
+    emptyMessage="No incidents recorded yet."
+    emptyIcon="exclamation-triangle"
+    [rowKey]="rowKeyFn"
+  >
+    <ng-template appCellTemplate="incidentId" let-row>
+      <button type="button" class="focus-ring text-brand-300 hover:text-brand-200 font-mono text-sm hover:underline" (click)="open(row.incidentId)">
+        {{ row.incidentId }}
+      </button>
+    </ng-template>
+    <ng-template appCellTemplate="deviceId" let-row>
+      <a class="text-slate-400 hover:text-brand-300 hover:underline font-mono text-xs" [routerLink]="['/devices', row.deviceId]">{{ row.deviceId }}</a>
+    </ng-template>
+    <ng-template appCellTemplate="state" let-row>
+      <app-status-badge [value]="row.state" />
+    </ng-template>
+    <ng-template appCellTemplate="firstReceivedAt" let-row>
+      <span [title]="row.firstReceivedAt">{{ row.firstReceivedAt | relativeTime }}</span>
+    </ng-template>
+    <ng-template appCellTemplate="lastReceivedAt" let-row>
+      <span [title]="row.lastReceivedAt">{{ row.lastReceivedAt | relativeTime }}</span>
+    </ng-template>
+  </app-data-table>
+</div>

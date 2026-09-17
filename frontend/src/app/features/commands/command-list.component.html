@@ -1,0 +1,53 @@
+<app-page-header title="Commands" subtitle="Issue remote commands to a device and review delivery history." icon="terminal">
+  <app-device-picker [value]="selectedDevice()" (valueChange)="onDeviceChange($event)" allLabel="Select a device…" />
+  @if (selectedDevice()) {
+    <button
+      type="button"
+      class="focus-ring flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-semibold bg-brand-600 hover:bg-brand-500 text-white"
+      (click)="issue()"
+    >
+      <app-icon name="plus" class="w-4 h-4" />
+      Issue command
+    </button>
+    <button
+      type="button"
+      class="focus-ring flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium border border-white/10 text-slate-300 hover:bg-white/5"
+      (click)="load()"
+    >
+      <app-icon name="arrow-path" class="w-4 h-4" />
+      Refresh
+    </button>
+  }
+</app-page-header>
+
+<div class="rounded-2xl border border-white/5 bg-surface-400/60 p-5 shadow-panel">
+  @if (!selectedDevice()) {
+    <app-empty-state icon="terminal" message="Choose a device to view or issue commands." hint="Commands are queried per device — the backend has no global command feed." />
+  } @else {
+    <app-data-table
+      [columns]="columns"
+      [rows]="rows()"
+      [loading]="loading()"
+      searchPlaceholder="Search command history…"
+      emptyMessage="No commands issued to this device yet."
+      emptyIcon="terminal"
+      [rowKey]="rowKeyFn"
+    >
+      <ng-template appCellTemplate="status" let-row>
+        <app-status-badge [value]="row.status" />
+      </ng-template>
+      <ng-template appCellTemplate="issuedAt" let-row>
+        <span [title]="row.issuedAt">{{ row.issuedAt | relativeTime }}</span>
+      </ng-template>
+      <ng-template appCellTemplate="expiresAt" let-row>
+        <span [title]="row.expiresAt">{{ row.expiresAt | relativeTime }}</span>
+      </ng-template>
+      <ng-template appCellTemplate="completedAt" let-row>
+        <span [title]="row.completedAt ?? ''">{{ row.completedAt ? (row.completedAt | relativeTime) : '—' }}</span>
+      </ng-template>
+      <ng-template appCellTemplate="resultJson" let-row>
+        <app-json-viewer [json]="row.resultJson" />
+      </ng-template>
+    </app-data-table>
+  }
+</div>

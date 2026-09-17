@@ -1,0 +1,126 @@
+<div class="min-h-screen flex bg-surface text-slate-200">
+  <!-- Sidenav — desktop -->
+  <aside class="hidden lg:flex lg:flex-col w-64 shrink-0 border-r border-white/5 bg-surface-700/60">
+    <div class="flex items-center gap-2.5 px-5 h-16 border-b border-white/5">
+      <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-brand-500/20 text-brand-400">
+        <app-icon name="shield-check" class="w-5 h-5" />
+      </div>
+      <div class="leading-tight">
+        <p class="font-bold text-white text-[15px]">CarSentinel</p>
+        <p class="text-[11px] text-slate-500 -mt-0.5">Remote Console</p>
+      </div>
+    </div>
+
+    <nav class="flex-1 overflow-y-auto py-4 px-3 flex flex-col gap-0.5">
+      @for (item of navItems; track item.path) {
+        <a
+          [routerLink]="item.path"
+          routerLinkActive="bg-brand-500/15 text-brand-300"
+          #rla="routerLinkActive"
+          class="focus-ring flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-slate-400 hover:bg-white/5 hover:text-slate-200 transition-colors"
+        >
+          <app-icon [name]="item.icon" class="w-[18px] h-[18px]" [class.text-brand-400]="rla.isActive" />
+          {{ item.label }}
+        </a>
+      }
+    </nav>
+
+    <div class="p-3 border-t border-white/5">
+      <a
+        routerLink="/settings"
+        routerLinkActive="bg-brand-500/15 text-brand-300"
+        class="focus-ring flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-slate-400 hover:bg-white/5 hover:text-slate-200 transition-colors"
+      >
+        <app-icon name="cog-6-tooth" class="w-[18px] h-[18px]" />
+        Settings
+      </a>
+    </div>
+  </aside>
+
+  <!-- Mobile nav drawer -->
+  @if (mobileNavOpen()) {
+    <div class="fixed inset-0 z-40 lg:hidden">
+      <div class="absolute inset-0 bg-black/60" (click)="mobileNavOpen.set(false)"></div>
+      <aside class="relative w-64 h-full bg-surface-700 border-r border-white/10 flex flex-col">
+        <div class="flex items-center justify-between px-5 h-16 border-b border-white/5">
+          <div class="flex items-center gap-2.5">
+            <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-brand-500/20 text-brand-400">
+              <app-icon name="shield-check" class="w-5 h-5" />
+            </div>
+            <p class="font-bold text-white text-[15px]">CarSentinel</p>
+          </div>
+          <button type="button" class="focus-ring p-1.5 text-slate-400" (click)="mobileNavOpen.set(false)">
+            <app-icon name="x-mark" class="w-5 h-5" />
+          </button>
+        </div>
+        <nav class="flex-1 overflow-y-auto py-4 px-3 flex flex-col gap-0.5">
+          @for (item of navItems; track item.path) {
+            <a
+              [routerLink]="item.path"
+              routerLinkActive="bg-brand-500/15 text-brand-300"
+              (click)="mobileNavOpen.set(false)"
+              class="focus-ring flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-slate-400 hover:bg-white/5 hover:text-slate-200"
+            >
+              <app-icon [name]="item.icon" class="w-[18px] h-[18px]" />
+              {{ item.label }}
+            </a>
+          }
+          <a
+            routerLink="/settings"
+            routerLinkActive="bg-brand-500/15 text-brand-300"
+            (click)="mobileNavOpen.set(false)"
+            class="focus-ring flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-slate-400 hover:bg-white/5 hover:text-slate-200"
+          >
+            <app-icon name="cog-6-tooth" class="w-[18px] h-[18px]" />
+            Settings
+          </a>
+        </nav>
+      </aside>
+    </div>
+  }
+
+  <!-- Main column -->
+  <div class="flex-1 flex flex-col min-w-0">
+    <header class="h-16 shrink-0 flex items-center justify-between gap-4 px-4 sm:px-6 border-b border-white/5 bg-surface-700/40 backdrop-blur">
+      <button type="button" class="focus-ring lg:hidden p-1.5 text-slate-400" (click)="mobileNavOpen.set(true)">
+        <app-icon name="squares-2x2" class="w-5 h-5" />
+      </button>
+
+      <div class="flex items-center gap-2 text-xs text-slate-500 truncate">
+        <app-icon name="server-stack" class="w-4 h-4 shrink-0" />
+        <span class="truncate">{{ apiConfig.baseUrl() }}</span>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-200/60 border border-white/5 text-xs">
+          <span
+            class="w-1.5 h-1.5 rounded-full"
+            [class.bg-emerald-400]="stream.connected()"
+            [class.animate-pulse-fast]="stream.connected()"
+            [class.bg-amber-400]="!stream.connected()"
+          ></span>
+          <span class="text-slate-300">{{ connectionLabel() }}</span>
+        </div>
+
+        <a
+          routerLink="/settings"
+          class="focus-ring flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs transition-colors"
+          [class]="
+            admin.hasKey()
+              ? 'bg-brand-500/10 border-brand-500/30 text-brand-300 hover:bg-brand-500/20'
+              : 'bg-surface-200/60 border-white/5 text-slate-400 hover:text-slate-200'
+          "
+        >
+          <app-icon name="key" class="w-3.5 h-3.5" />
+          {{ admin.hasKey() ? 'Admin key set' : 'No admin key' }}
+        </a>
+      </div>
+    </header>
+
+    <main class="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+      <div class="max-w-7xl mx-auto">
+        <router-outlet></router-outlet>
+      </div>
+    </main>
+  </div>
+</div>

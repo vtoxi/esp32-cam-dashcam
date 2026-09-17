@@ -1,0 +1,90 @@
+<app-page-header title="Dashboard" subtitle="Fleet status at a glance." icon="squares-2x2">
+  <button
+    type="button"
+    class="focus-ring flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium border border-white/10 text-slate-300 hover:bg-white/5"
+    (click)="load()"
+  >
+    <app-icon name="arrow-path" class="w-4 h-4" />
+    Refresh
+  </button>
+</app-page-header>
+
+@if (loadError()) {
+  <div class="rounded-2xl border border-rose-400/20 bg-rose-400/5 p-6 mb-6 flex items-start gap-3">
+    <app-icon name="exclamation-triangle" class="w-5 h-5 text-rose-400 mt-0.5" />
+    <div>
+      <p class="text-sm text-rose-300 font-medium">Could not reach the backend.</p>
+      <p class="text-sm text-slate-400 mt-1">Check the API base URL in <a routerLink="/settings" class="text-brand-300 hover:underline">Settings</a>.</p>
+    </div>
+  </div>
+}
+
+<div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+  <app-stat-card icon="device-phone" tone="primary" [value]="loading() ? '—' : (health()?.deviceCount ?? 0)" label="Registered devices" />
+  <app-stat-card icon="wifi" tone="success" [value]="loading() ? '—' : (health()?.onlineCount ?? 0)" label="Online now" />
+  <app-stat-card icon="exclamation-triangle" tone="warning" [value]="loading() ? '—' : offlineCount()" label="Offline" />
+  <app-stat-card icon="bolt" [tone]="stream.connected() ? 'success' : 'neutral'" [value]="stream.connected() ? 'Live' : 'Off'" label="Real-time stream" />
+</div>
+
+<div class="grid lg:grid-cols-3 gap-6">
+  <section class="lg:col-span-2 rounded-2xl border border-white/5 bg-surface-400/60 p-6 shadow-panel">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="font-semibold text-white">Device fleet</h2>
+      <a routerLink="/devices" class="text-sm text-brand-300 hover:underline">View all</a>
+    </div>
+    @if (loading()) {
+      <div class="flex justify-center py-10">
+        <div class="w-6 h-6 rounded-full border-2 border-brand-400/30 border-t-brand-400 animate-spin"></div>
+      </div>
+    } @else if (!health() || health()!.devices.length === 0) {
+      <app-empty-state icon="device-phone" message="No devices registered yet." hint="A gateway registers itself automatically on its first POST /api/v1/register call." />
+    } @else {
+      <div class="flex flex-col divide-y divide-white/5">
+        @for (d of health()!.devices; track d.id) {
+          <a [routerLink]="['/devices', d.id]" class="flex items-center justify-between py-2.5 hover:bg-white/[0.03] -mx-2 px-2 rounded-lg transition-colors">
+            <span class="font-mono text-sm text-slate-300">{{ d.id }}</span>
+            <div class="flex items-center gap-3">
+              <span class="text-xs text-slate-500" [title]="d.lastSeenAt">{{ d.lastSeenAt | relativeTime }}</span>
+              <app-status-badge [value]="d.online ? 'online' : 'offline'" [dot]="true" />
+            </div>
+          </a>
+        }
+      </div>
+    }
+  </section>
+
+  <section class="rounded-2xl border border-white/5 bg-surface-400/60 p-6 shadow-panel">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="font-semibold text-white">Recent activity</h2>
+      <a routerLink="/activity" class="text-sm text-brand-300 hover:underline">View all</a>
+    </div>
+    @if (recentActivity().length === 0) {
+      <app-empty-state icon="bolt" message="No activity yet." />
+    } @else {
+      <div class="flex flex-col divide-y divide-white/5">
+        @for (item of recentActivity(); track item.id) {
+          <div class="py-2.5">
+            <div class="flex items-center justify-between mb-0.5">
+              <app-status-badge [value]="item.type" tone="info" />
+              <span class="text-xs text-slate-500" [title]="item.timestamp">{{ item.timestamp | relativeTime }}</span>
+            </div>
+            <p class="text-xs text-slate-500 font-mono truncate">{{ item.deviceId }}</p>
+          </div>
+        }
+      </div>
+    }
+  </section>
+</div>
+
+<div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
+  @for (link of quickLinks; track link.path) {
+    <a [routerLink]="link.path" class="focus-ring group flex flex-col gap-2 rounded-2xl border border-white/5 bg-surface-400/60 p-5 shadow-panel hover:border-brand-500/30 transition-colors">
+      <div class="flex items-center justify-between">
+        <app-icon [name]="link.icon" class="w-5 h-5 text-brand-400" />
+        <app-icon name="chevron-right" class="w-4 h-4 text-slate-600 group-hover:text-brand-400 group-hover:translate-x-0.5 transition-all" />
+      </div>
+      <p class="font-semibold text-white text-sm">{{ link.label }}</p>
+      <p class="text-xs text-slate-500">{{ link.description }}</p>
+    </a>
+  }
+</div>

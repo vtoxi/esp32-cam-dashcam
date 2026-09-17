@@ -24,9 +24,15 @@ typedef bool (*StatusFlashToggleProvider)(bool on);
 
 class StatusPage {
 public:
+    // evidenceProvider reuses StatusStreamProvider's signature (WiFiClient +
+    // one String) with the String meaning "eventId" instead of "nodeId" — Phase
+    // 21.7's read-back path (docs/REMOTE_ACCESS.md Section 4's identified gap),
+    // implemented in node_main.cpp by streaming the file EvidenceManager::imagePath()
+    // resolves.
     static void begin(const String& deviceTitle, StatusContentProvider provider,
                       StatusStreamProvider streamProvider = nullptr,
-                      StatusFlashToggleProvider flashProvider = nullptr);
+                      StatusFlashToggleProvider flashProvider = nullptr,
+                      StatusStreamProvider evidenceProvider = nullptr);
     static void loop();
     static bool isActive();
 
@@ -34,9 +40,11 @@ private:
     static void handleRoot();
     static void handleStream();
     static void handleFlash();
+    static void handleEvidence();
     static StatusContentProvider contentProvider;
     static StatusStreamProvider streamProvider;
     static StatusFlashToggleProvider flashProvider;
+    static StatusStreamProvider evidenceProvider;
     static String title;
     static bool active;
 };

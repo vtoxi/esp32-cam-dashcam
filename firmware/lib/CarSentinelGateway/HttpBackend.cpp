@@ -99,4 +99,48 @@ bool HttpBackend::sendIncident(const String& jsonPayload) {
     return post("/incidents", jsonPayload);
 }
 
+bool HttpBackend::uploadEvidence(const String& incidentId, const String& nodeId,
+                                  const String& eventId, const uint8_t* data, size_t len) {
+    if (baseUrl.isEmpty()) {
+        Logger::warn(TAG, "uploadEvidence() called with no baseUrl configured — refusing");
+        lastHttpStatus = 0;
+        return false;
+    }
+
+    String url = baseUrl + "/incidents/" + incidentId + "/evidence?nodeId=" + nodeId +
+                 "&eventId=" + eventId;
+    HTTPClient http;
+    WiFiClientSecure secureClient;
+    WiFiClient plainClient;
+    bool began = url.startsWith("https://") ? (secureClient.setInsecure(), http.begin(secureClient, url))
+                                             : http.begin(plainClient, url);
+    if (!began) {
+        Logger::error(TAG, "Failed to begin HTTP request to " + url);
+        lastHttpStatus = 0;
+        return false;
+    }
+
+    http.addHeader("Content-Type", "image/jpeg");
+    if (!credential.isEmpty()) {
+        http.addHeader("Authorization", "Bearer " + credential);
+    }
+    if (!deviceId.isEmpty()) {
+        http.addHeader("X-CarSentinel-Device-Id", deviceId);
+    }
+
+    // POST(uint8_t*, size_t) — raw binary body, not the JSON String overload post()
+    // uses above. Evidence images (tens of KB) go straight from the buffer the
+    // Gateway already fetched from the node; no intermediate String copy.
+    int code = http.POST(const_cast<uint8_t*>(data), len);
+    lastHttpStatus = code;
+    http.end();
+
+    if (code >= 200 && code < 300) {
+        lastSuccessMs = millis();
+        return true;
+    }
+    Logger::warn(TAG, "Evidence upload failed, HTTP " + String(code));
+    return false;
+}
+
 }  // namespace CarSentinel

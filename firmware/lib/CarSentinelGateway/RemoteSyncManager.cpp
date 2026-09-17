@@ -201,4 +201,10 @@ bool RemoteSyncManager::sendIncident(const String& jsonPayload) {
     return false;
 }
 
+bool RemoteSyncManager::uploadEvidence(const String& incidentId, const String& nodeId,
+                                        const String& eventId, const uint8_t* data, size_t len) {
+    if (state == BackendConnectionState::LOCAL_ONLY || !backend) return false;
+    return backend->uploadEvidence(incidentId, nodeId, eventId, data, len);
+}
+
 }  // namespace CarSentinel

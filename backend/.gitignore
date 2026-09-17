@@ -4,5 +4,6 @@ obj/
 *.db
 *.db-shm
 *.db-wal
+evidence/
 appsettings.Development.json
 Properties/launchSettings.json

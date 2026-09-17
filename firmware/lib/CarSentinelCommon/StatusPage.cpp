@@ -11,6 +11,7 @@ static WebServer server(80);
 StatusContentProvider StatusPage::contentProvider = nullptr;
 StatusStreamProvider StatusPage::streamProvider = nullptr;
 StatusFlashToggleProvider StatusPage::flashProvider = nullptr;
+StatusStreamProvider StatusPage::evidenceProvider = nullptr;
 String StatusPage::title;
 bool StatusPage::active = false;
 
@@ -60,15 +61,34 @@ void StatusPage::handleFlash() {
     server.send(200, "application/json", String("{\"flash\":") + (actualState ? "true" : "false") + "}");
 }
 
+// Phase 21.7 — the Gateway (or, with the same CORS posture as /flash, a browser on
+// another origin) fetches an already-captured evidence image by eventId. Not a live
+// capture (that's /stream or a future /snapshot) — this serves what EvidenceManager
+// already wrote to SD for a specific event.
+void StatusPage::handleEvidence() {
+    if (!evidenceProvider) {
+        server.send(404, "text/plain", "Evidence retrieval unavailable on this device");
+        return;
+    }
+    // Like handleStream(), evidenceProvider writes a raw HTTP response directly to the
+    // client socket (bypassing WebServer::send()) — so any CORS header has to be part
+    // of that raw response, not queued via server.sendHeader() here (which only
+    // affects a subsequent server.send() call, never made on this path).
+    evidenceProvider(server.client(), server.arg("eventId"));
+}
+
 void StatusPage::begin(const String& deviceTitle, StatusContentProvider provider,
-                       StatusStreamProvider streamP, StatusFlashToggleProvider flashP) {
+                       StatusStreamProvider streamP, StatusFlashToggleProvider flashP,
+                       StatusStreamProvider evidenceP) {
     title = deviceTitle;
     contentProvider = provider;
     streamProvider = streamP;
     flashProvider = flashP;
+    evidenceProvider = evidenceP;
     server.on("/", HTTP_GET, handleRoot);
     server.on("/stream", HTTP_GET, handleStream);
     server.on("/flash", HTTP_GET, handleFlash);
+    server.on("/evidence", HTTP_GET, handleEvidence);
     server.begin();
     active = true;
     Logger::info(TAG, "Status page active at http://<device-ip>/");

@@ -44,6 +44,7 @@
 #include "BackendQueue.h"
 
 #include <ArduinoJson.h>
+#include <HTTPClient.h>
 #include <LittleFS.h>
 
 using namespace CarSentinel;
@@ -157,6 +158,119 @@ static void onEspNowMessage(const EspNowMessage& msg, const uint8_t mac[6]) {
     }
 }
 
+// Phase 21.7 — mirrors IncidentCorrelator::persist()'s on-disk shape (that method is
+// private; this is a small, deliberate duplication rather than reworking its access
+// level for one caller) so the backend's incident schema matches the locally-persisted
+// one, per docs/REMOTE_ACCESS.md Section 4's "the remote API's incident schema should
+// be the same shape, not a redesign."
+static String incidentToJson(const IncidentRecord& inc) {
+    JsonDocument doc;
+    doc["incidentId"] = inc.incidentId;
+    doc["state"] = incidentStateToString(inc.state);
+    doc["triggerNodeId"] = inc.triggerNodeId;
+    doc["triggerEventId"] = inc.triggerEventId;
+    doc["createdAtMs"] = inc.createdAtMs;
+
+    JsonObject trig = doc["trigger"].to<JsonObject>();
+    trig["triggerType"] = inc.trigger.triggerType;
+    trig["severity"] = inc.trigger.severity;
+    trig["hasImage"] = inc.trigger.hasImage;
+    if (inc.trigger.hasGps) {
+        JsonObject gps = trig["gps"].to<JsonObject>();
+        gps["lat"] = inc.trigger.gpsLat;
+        gps["lon"] = inc.trigger.gpsLon;
+        gps["speedKmph"] = inc.trigger.gpsSpeedKmph;
+    }
+    if (inc.trigger.hasImu) {
+        JsonObject imu = trig["imu"].to<JsonObject>();
+        imu["accelG"] = inc.trigger.imuAccelG;
+        imu["gyroDps"] = inc.trigger.imuGyroDps;
+    }
+
+    JsonArray evidenceArr = doc["evidence"].to<JsonArray>();
+    for (uint8_t i = 0; i < inc.evidenceCount; i++) {
+        JsonObject e = evidenceArr.add<JsonObject>();
+        e["nodeId"] = inc.evidence[i].nodeId;
+        e["localEventId"] = inc.evidence[i].localEventId;
+        e["hasImage"] = inc.evidence[i].hasImage;
+    }
+
+    String out;
+    serializeJson(doc, out);
+    return out;
+}
+
+// Phase 21.7 — fetches one evidence image from the node that captured it (over the
+// node's own /evidence route, StatusPage.cpp's evidenceProvider — the read-back path
+// that didn't exist before this phase) and hands the bytes to RemoteSyncManager.
+// Bounded: a sane max size (300KB — comfortably above what this project's JPEG
+// quality/resolution settings, docs/HARDWARE.md, ever produce) so a malformed
+// Content-Length can't exhaust the gateway's heap.
+static bool fetchAndUploadEvidence(const String& incidentId, const String& nodeId, const String& eventId) {
+    DeviceRegistryEntry* dev = DeviceRegistry::find(nodeId);
+    if (!dev || dev->ip.isEmpty()) {
+        Logger::warn(TAG, "Evidence fetch: no known IP for " + nodeId + " — skipping");
+        return false;
+    }
+
+    HTTPClient http;
+    WiFiClient client;
+    String url = "http://" + dev->ip + "/evidence?eventId=" + eventId;
+    if (!http.begin(client, url)) {
+        Logger::warn(TAG, "Evidence fetch: failed to begin request to " + url);
+        return false;
+    }
+    int code = http.GET();
+    if (code != 200) {
+        Logger::warn(TAG, "Evidence fetch from " + nodeId + " failed, HTTP " + String(code));
+        http.end();
+        return false;
+    }
+    int len = http.getSize();
+    static const int MAX_EVIDENCE_BYTES = 300000;
+    if (len <= 0 || len > MAX_EVIDENCE_BYTES) {
+        Logger::warn(TAG, "Evidence fetch: implausible size " + String(len) + " bytes — refusing");
+        http.end();
+        return false;
+    }
+
+    uint8_t* buf = static_cast<uint8_t*>(malloc(len));
+    if (!buf) {
+        Logger::error(TAG, "Evidence fetch: failed to allocate " + String(len) + " bytes");
+        http.end();
+        return false;
+    }
+    WiFiClient* stream = http.getStreamPtr();
+    size_t total = 0;
+    unsigned long startedMs = millis();
+    while (total < (size_t)len && millis() - startedMs < 15000) {
+        Watchdog::feed();
+        size_t avail = stream->available();
+        if (avail == 0) {
+            if (!client.connected()) break;
+            delay(5);
+            continue;
+        }
+        size_t toRead = avail < (size_t)(len - total) ? avail : (size_t)(len - total);
+        int r = stream->readBytes(buf + total, toRead);
+        if (r <= 0) break;
+        total += r;
+    }
+    http.end();
+
+    bool ok = false;
+    if (total == (size_t)len) {
+        ok = RemoteSyncManager::uploadEvidence(incidentId, nodeId, eventId, buf, len);
+        Logger::info(TAG, String(ok ? "Uploaded" : "Failed to upload") + " evidence " + nodeId +
+                     "/" + eventId + " (" + String(len) + " bytes) for incident " + incidentId);
+    } else {
+        Logger::warn(TAG, "Evidence fetch from " + nodeId + " short read: " + String(total) +
+                     "/" + String(len) + " bytes");
+    }
+    free(buf);
+    return ok;
+}
+
 // Phase 16 — AI Security Assistance: runs the (heuristic, honestly documented as such —
 // see AIThreatFramework.h) threat framework on every closed incident before deciding
 // whether to actually email about it. This is the "assistance" part: a LOW-confidence,
@@ -169,6 +283,21 @@ static void assistedIncidentNotify(const IncidentRecord& inc) {
     Logger::info(TAG, "AI assessment for " + inc.incidentId + ": " +
                  String(threatSeverityToString(assessment.severity)) + " (" +
                  String(assessment.confidencePercent) + "% confidence) — " + assessment.reasoning);
+
+    // Phase 21.5+/21.7: backend sync happens regardless of the AI assessment below —
+    // that logic only gates the *email* noise, not what reaches the backend. A
+    // no-op when BackendConfig is disabled (RemoteSyncManager::sendIncident()'s own
+    // LOCAL_ONLY short-circuit). Evidence policy (docs/BACKEND.md Section 7's
+    // SyncPolicy) isn't filtered here yet — every evidenced node's image is fetched
+    // and uploaded whenever the backend is enabled at all; a real per-policy filter
+    // (METADATA_ONLY vs. INCIDENT_ONLY vs. ALL_EVENTS) is a documented gap, not
+    // implemented this pass.
+    RemoteSyncManager::sendIncident(incidentToJson(inc));
+    for (uint8_t i = 0; i < inc.evidenceCount; i++) {
+        if (inc.evidence[i].hasImage) {
+            fetchAndUploadEvidence(inc.incidentId, inc.evidence[i].nodeId, inc.evidence[i].localEventId);
+        }
+    }
 
     if (assessment.severity == ThreatSeverity::THREAT_LOW) {
         Logger::info(TAG, inc.incidentId + " assessed LOW — skipping email notification "

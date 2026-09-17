@@ -45,6 +45,15 @@ public:
     // this interface needing to know the exact response schema.
     virtual bool registerDevice(const String& jsonPayload, String& outResponsePayload) = 0;
 
+    // Phase 21.7 — uploads one already-fetched evidence image (the Gateway has
+    // already pulled the bytes off the originating node's SD card over its local
+    // /evidence route — docs/REMOTE_ACCESS.md Section 4's identified gap, closed in
+    // this phase). Not a JSON payload like the methods above; raw bytes with a
+    // handful of identifying fields the backend needs to file it under the right
+    // incident/node/event.
+    virtual bool uploadEvidence(const String& incidentId, const String& nodeId,
+                                 const String& eventId, const uint8_t* data, size_t len) = 0;
+
     // The last HTTP-ish status code from any of the calls above — lets
     // RemoteSyncManager distinguish "wrong credential" (its own state, AUTH_FAILED)
     // from "server unreachable" (RETRY_BACKOFF), which was an explicitly deferred gap

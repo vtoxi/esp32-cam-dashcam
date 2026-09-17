@@ -19,6 +19,7 @@ builder.Services.AddAuthentication("DeviceCredential")
         CarSentinel.Backend.Auth.DeviceCredentialAuthenticationHandler>("DeviceCredential", null);
 builder.Services.AddAuthorization();
 builder.Services.AddSingleton<EventBroadcaster>();
+builder.Services.AddSingleton<EvidenceStorage>();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>

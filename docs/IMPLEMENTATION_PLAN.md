@@ -29,7 +29,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 18 | Vehicle Integration | Compiles clean (both envs) — capability-gated ignition-sense input drives DRIVING/PARKED when wired; OBD-II/CAN blocked on hardware, not yet started |
 | 19 | Dashboard | Compiles clean (both envs) — gateway-hosted single-page dashboard + JSON API + live camera stream proxy; pending physical bench test |
 | 20 | Vehicle Installation | Planning checklist documented (`docs/wiring/VEHICLE_INSTALLATION.md`) — no firmware component, no physical install has happened |
-| 21 | Remote Backend, API & Hybrid Connectivity | 21.1–21.6 complete: architecture audit, gateway-side backend abstraction, persistent retry queue, device registration/auth, a real ASP.NET Core reference backend (`backend/`), and a working SSE real-time stream — all manually verified end-to-end. Gateway firmware itself still not bench-tested against a live server. 21.7 onward not started |
+| 21 | Remote Backend, API & Hybrid Connectivity | 21.1–21.7 complete: architecture audit, gateway-side backend abstraction, persistent retry queue, device registration/auth, a real ASP.NET Core reference backend (`backend/`), SSE real-time stream, and end-to-end evidence upload (node → gateway → backend, byte-diff verified). Gateway firmware itself still not bench-tested against a live server. 21.8 onward not started |
 
 ## Phase 0 — Repository & Hardware Discovery
 
@@ -1586,10 +1586,63 @@ single-process in-memory; a real multi-instance deployment needs a shared broker
 explicitly out of scope per `docs/BACKEND.md`'s "avoid unnecessary infrastructure"
 until there's a second instance to justify it).
 
+## Phase 21.7 — Evidence Upload (complete)
+
+**Closes the exact gap `docs/REMOTE_ACCESS.md` Section 4 identified during the Phase
+21.1 audit**: "no existing path for the Gateway to pull an image off a node's SD card
+on demand." Three-hop chain, each hop new:
+
+1. **Node** (`EvidenceManager::imagePath(eventId)`, `lib/CarSentinelCommon/`) — resolves
+   an already-captured event's image path on SD if it exists. Served over HTTP via a
+   new `StatusPage` route, `GET /evidence?eventId=...` (raw response, same style as
+   the existing `/stream` route, CORS-enabled like `/flash`) — `node_main.cpp`'s
+   `serveEvidence()`.
+2. **Gateway** (`gateway_main.cpp`'s `fetchAndUploadEvidence()`) — GETs the image from
+   the originating node's IP (`DeviceRegistry`, already tracked), bounded to 300KB
+   (comfortably above what this project's JPEG settings ever produce) so a malformed
+   `Content-Length` can't exhaust the gateway's heap, then hands the bytes to
+   `RemoteSyncManager::uploadEvidence()`. Wired into `assistedIncidentNotify()`
+   (Phase 16) — every evidenced node's image is fetched and uploaded whenever the
+   backend is enabled, run alongside (not gated by) the AI severity check that
+   decides whether to *email* about the incident. `incidentToJson()` mirrors
+   `IncidentCorrelator::persist()`'s on-disk shape so the backend's incident schema
+   matches the local one (`docs/REMOTE_ACCESS.md` Section 4's "same shape, not a
+   redesign").
+3. **`RemoteBackend`/`HttpBackend`** gain `uploadEvidence()` — raw-bytes `POST`
+   (`HTTPClient::POST(uint8_t*, size_t)`, not the JSON-string overload the other
+   methods use), `Content-Type: image/jpeg`. **Not queued on failure** (unlike the
+   JSON `send*` methods) — `BackendQueue`'s persisted-JSON-array-on-LittleFS design
+   was never sized for binary blobs; a real design for durable evidence retry would
+   probably re-fetch from the node later rather than buffer image bytes, and is
+   deferred, documented in `RemoteSyncManager.h`.
+4. **Backend** (`backend/`) — `EvidenceRecord` (metadata) + `EvidenceStorage`
+   (`Services/`, local-disk stand-in for real object storage per `docs/BACKEND.md`
+   Section 23, path components sanitized against traversal — "local doesn't mean
+   trusted," extended to the Gateway↔Backend boundary). `POST
+   /api/v1/incidents/{incidentId}/evidence`, `GET .../evidence` (metadata list), `GET
+   /api/v1/evidence/{id}/file` (the actual bytes). Publishes `evidence.uploaded` on
+   the Phase 21.6 SSE stream too.
+
+**Verified byte-for-byte, not just building**: registered a device, created an
+incident, uploaded a fake JPEG via the exact multipart-free raw-POST shape
+`HttpBackend.cpp` uses, listed its metadata, downloaded it back, and diffed the
+downloaded bytes against the original — identical.
+
+**Not implemented**: evidence-policy filtering (`docs/BACKEND.md` Section 7's
+`SyncPolicy` — `METADATA_ONLY`/`INCIDENT_ONLY`/etc. — every evidenced image is
+uploaded whenever the backend is enabled at all, no filtering by policy yet); durable
+retry for a failed evidence upload (documented gap above); an on-demand `/snapshot`
+route (only already-captured evidence is retrievable, not a fresh live frame).
+
+**Build status: firmware compiles clean, both environments** (node Flash 65.4%, +0.2%
+from the new `/evidence` route — comfortable margin, no IRAM regression). **Backend
+manually verified end-to-end** (upload → list → download → byte-diff), same "actually
+run it" discipline as every other Phase 21 sub-phase since 21.5.
+
 ## Next Step
 
-Phase 21.7 (Evidence Upload) — the Gateway needs to actually fetch an evidence image
-off a node's SD card first (docs/REMOTE_ACCESS.md Section 4's identified gap: no such
-path exists yet) before it can upload anything to the backend. Everything else in the
-project remains independent of Phase 21 and can still be bench-tested in the meantime
-— Phase 21 stays purely additive.
+Phase 21.8 (Remote Commands) — a secure Backend → Gateway → Node command flow
+(`POST /api/v1/devices/{id}/commands`, polling since RemoteSyncManager already polls
+rather than maintaining a persistent connection). Everything else in the project
+remains independent of Phase 21 and can still be bench-tested in the meantime — Phase
+21 stays purely additive.

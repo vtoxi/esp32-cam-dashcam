@@ -128,6 +128,42 @@ public static class IngestEndpoints
             broadcaster.Publish(isNew ? "incident.created" : "incident.updated", device.Id, payload);
             return Results.Ok(new { ok = true, incidentId });
         }).RequireAuthorization();
+
+        // Phase 21.7 — raw JPEG body (matches HttpBackend.cpp's uploadEvidence(),
+        // Content-Type: image/jpeg, not JSON). incidentId is a route segment since
+        // evidence always belongs to one incident; nodeId/eventId are query params
+        // since they identify which node/local-event captured it, not this backend's
+        // own identifiers.
+        group.MapPost("/incidents/{incidentId}/evidence",
+            async (string incidentId, string? nodeId, string? eventId, HttpContext ctx, AppDbContext db,
+                   EvidenceStorage storage, EventBroadcaster broadcaster) =>
+        {
+            var device = await RequireDeviceAsync(ctx, db);
+            if (device is null) return Results.Unauthorized();
+            if (ctx.Request.ContentLength is null or 0)
+            {
+                return Results.BadRequest(new { error = "empty body" });
+            }
+
+            var (relativePath, size) = await storage.SaveAsync(
+                incidentId, nodeId ?? "unknown", eventId ?? "unknown", ctx.Request.Body);
+
+            db.Evidence.Add(new EvidenceRecord
+            {
+                IncidentId = incidentId,
+                DeviceId = device.Id,
+                NodeId = nodeId ?? "unknown",
+                EventId = eventId ?? "unknown",
+                ContentType = ctx.Request.ContentType ?? "image/jpeg",
+                SizeBytes = size,
+                StoragePath = relativePath,
+                UploadedAt = DateTime.UtcNow,
+            });
+            device.LastSeenAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            broadcaster.Publish("evidence.uploaded", device.Id, new { incidentId, nodeId, eventId, size });
+            return Results.Ok(new { ok = true, size });
+        }).RequireAuthorization();
     }
 
     private static async Task<Device?> RequireDeviceAsync(HttpContext ctx, AppDbContext db)

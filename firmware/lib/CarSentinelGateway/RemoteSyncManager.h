@@ -54,6 +54,16 @@ public:
     static bool sendEvent(const String& jsonPayload);
     static bool sendIncident(const String& jsonPayload);
 
+    // Phase 21.7 — not queued on failure (unlike the JSON send* methods above): an
+    // evidence image is tens of KB, and BackendQueue/OfflineQueue's persisted-JSON-
+    // array-on-LittleFS design was never sized for binary blobs — queueing images
+    // durably would need its own design (probably "leave the reference on the node's
+    // SD and retry the whole fetch-and-upload later" rather than buffering the image
+    // bytes themselves), not a small extension of the existing queue. Documented gap,
+    // not an oversight — see docs/IMPLEMENTATION_PLAN.md's Phase 21.7 entry.
+    static bool uploadEvidence(const String& incidentId, const String& nodeId,
+                                const String& eventId, const uint8_t* data, size_t len);
+
 private:
     static RemoteBackend* backend;
     static BackendConnectionState state;

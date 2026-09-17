@@ -59,13 +59,16 @@ with, so Phase 21.5's route design starts from real schemas, not guesses:
   trigger info with GPS/IMU/env, evidence references by nodeId+localEventId) —
   `IncidentCorrelator::listRecentJson()` (Phase 19) already serializes this; the
   remote API's incident schema should be the same shape, not a redesign.
-  **Evidence images themselves are not centrally available** — they live on each
-  node's own SD card (`EvidenceManager`, Phase 4) and are referenced, not copied, by
-  the incident record. A remote `GET /api/v1/incidents/{id}/evidence` endpoint needs
-  the Gateway to actually fetch the image from the node first (over ESP-NOW/Wi-Fi,
-  Section 22 of the brief — evidence upload policy) before it can forward it to the
-  backend; today there is no such fetch path at all (nodes only ever push evidence
-  locally to their own SD, they don't serve it to the gateway on request).
+  **Fixed in Phase 21.7.** Evidence images used to be un-fetchable — they live on
+  each node's own SD card (`EvidenceManager`, Phase 4), referenced not copied by the
+  incident record, and nodes only ever pushed evidence locally, never served it on
+  request. Now: `EvidenceManager::imagePath()` + a new `GET /evidence?eventId=...`
+  route on the node's `StatusPage`, fetched by the Gateway
+  (`fetchAndUploadEvidence()` in `gateway_main.cpp`) and uploaded to the backend
+  (`POST /api/v1/incidents/{id}/evidence`, `GET .../evidence` for metadata,
+  `GET /api/v1/evidence/{id}/file` for the bytes) — verified byte-for-byte
+  end-to-end. Not yet filtered by `docs/BACKEND.md` Section 7's evidence sync
+  policy (every evidenced image uploads whenever the backend is enabled at all).
 - **Telemetry** → `GpsFix`/`ImuReading` (`GpsManager.h`/`ImuManager.h`) and
   `buildStatusJson()` in `gateway_main.cpp` (Phase 19) already assemble the live
   status payload the local dashboard polls — same shape, different transport.

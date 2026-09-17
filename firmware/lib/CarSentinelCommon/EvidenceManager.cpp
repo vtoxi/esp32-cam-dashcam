@@ -150,4 +150,12 @@ bool EvidenceManager::isAvailable() {
     return available;
 }
 
+String EvidenceManager::imagePath(const String& eventId) {
+    if (!available || eventId.isEmpty()) {
+        return "";
+    }
+    String path = String(EVENTS_DIR) + "/" + eventId + "/image_001.jpg";
+    return SD_MMC.exists(path) ? path : "";
+}
+
 }  // namespace CarSentinel

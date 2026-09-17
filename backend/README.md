@@ -42,13 +42,18 @@ assigns. See `RemoteSyncManager.cpp`'s `attemptRegistration()` for exactly what 
 - Incidents are upserted by `incidentId`, not appended — one row holds the latest state
   as an incident moves through its lifecycle.
 - `GET /api/v1/stream` — Server-Sent Events, pushes every ingested heartbeat/telemetry/
-  event/incident in real time (`new EventSource('/api/v1/stream')` from a browser).
+  event/incident/evidence upload in real time (`new EventSource('/api/v1/stream')`).
+- `POST /api/v1/incidents/{incidentId}/evidence` — raw JPEG body (not JSON), matching
+  `HttpBackend.cpp`'s `uploadEvidence()`. `GET .../evidence` lists metadata, `GET
+  /api/v1/evidence/{id}/file` serves the bytes. Stored under `evidence/` next to the
+  project (gitignored) — a local-disk stand-in for real object storage.
 
 ## What's not here yet (see `docs/IMPLEMENTATION_PLAN.md`'s Phase 21 entries)
 
 No EF migrations (schema changes mean deleting `carsentinel.db` and starting over — fine
 for this reference implementation, not for a real deployment), no user-facing
 authentication on the read API, no `device.offline` detection (only reacts to a
-heartbeat arriving after a gap, doesn't detect one that stops), no evidence/image
-upload endpoint (Phase 21.7), no remote-command relay (Phase 21.8), no webhooks
+heartbeat arriving after a gap, doesn't detect one that stops), no evidence sync-policy
+filtering (every evidenced image uploads whenever the backend is enabled, not filtered
+by `METADATA_ONLY`/etc.), no remote-command relay (Phase 21.8), no webhooks
 (Phase 21.9).

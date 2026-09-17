@@ -20,6 +20,7 @@ public class AppDbContext : DbContext
     public DbSet<TelemetryRecord> Telemetry => Set<TelemetryRecord>();
     public DbSet<EventRecord> Events => Set<EventRecord>();
     public DbSet<IncidentRecord> Incidents => Set<IncidentRecord>();
+    public DbSet<EvidenceRecord> Evidence => Set<EvidenceRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -28,5 +29,6 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<TelemetryRecord>().HasIndex(t => t.DeviceId);
         modelBuilder.Entity<EventRecord>().HasIndex(e => e.DeviceId);
         modelBuilder.Entity<IncidentRecord>().HasIndex(i => i.DeviceId);
+        modelBuilder.Entity<EvidenceRecord>().HasIndex(e => e.IncidentId);
     }
 }

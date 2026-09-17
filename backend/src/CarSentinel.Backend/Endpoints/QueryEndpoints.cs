@@ -1,4 +1,5 @@
 using CarSentinel.Backend.Data;
+using CarSentinel.Backend.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace CarSentinel.Backend.Endpoints;
@@ -63,6 +64,25 @@ public static class QueryEndpoints
 
         group.MapGet("/incidents/{incidentId}", async (string incidentId, AppDbContext db) =>
             await db.Incidents.FindAsync(incidentId) is { } i ? Results.Ok(i) : Results.NotFound());
+
+        // Phase 21.7 — metadata list; the actual bytes are at
+        // /evidence/{id}/file (a separate route, not a path segment here, so the
+        // metadata listing stays cheap even for an incident with several images).
+        group.MapGet("/incidents/{incidentId}/evidence", async (string incidentId, AppDbContext db) =>
+            await db.Evidence
+                .Where(e => e.IncidentId == incidentId)
+                .OrderBy(e => e.UploadedAt)
+                .Select(e => new { e.Id, e.NodeId, e.EventId, e.ContentType, e.SizeBytes, e.UploadedAt })
+                .ToListAsync());
+
+        group.MapGet("/evidence/{id:long}/file", async (long id, AppDbContext db, EvidenceStorage storage) =>
+        {
+            var record = await db.Evidence.FindAsync(id);
+            if (record is null) return Results.NotFound();
+            var path = storage.GetFullPath(record.StoragePath);
+            if (!File.Exists(path)) return Results.NotFound();
+            return Results.File(path, record.ContentType);
+        });
 
         // Section 24 of the Phase 21 brief: "the backend should be able to show
         // Gateway online/offline, last heartbeat." A device is "online" if it's been

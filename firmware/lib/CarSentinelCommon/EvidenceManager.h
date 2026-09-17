@@ -35,6 +35,14 @@ public:
 
     static bool isAvailable();
 
+    // Phase 21.7 — the read-back path that didn't exist before (docs/REMOTE_ACCESS.md
+    // Section 4's identified gap: "no existing path for the Gateway to pull an image
+    // off a node's SD card on demand"). Returns the on-SD path to eventId's first
+    // attached image ("image_001.jpg" — attachImage() only ever writes one image per
+    // event today) if it exists, or "" if the event/image doesn't exist. Callers open
+    // it themselves via SD_MMC — this class doesn't own an HTTP layer.
+    static String imagePath(const String& eventId);
+
 private:
     static bool available;
     static int nextEventNumber();

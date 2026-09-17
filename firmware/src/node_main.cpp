@@ -38,6 +38,7 @@
 #include "OtaManager.h"
 
 #include <ArduinoJson.h>
+#include <SD_MMC.h>
 
 using namespace CarSentinel;
 
@@ -85,6 +86,44 @@ static void streamCamera(WiFiClient client, const String&) {
 static bool flashToggle(bool on) {
     CameraManager::setFlash(on);
     return CameraManager::isFlashOn();
+}
+
+// Phase 21.7 — serves an already-captured evidence image by eventId
+// (EvidenceManager::imagePath()), for the Gateway to fetch and relay to a backend
+// (docs/REMOTE_ACCESS.md Section 4's identified gap: this path didn't exist before).
+// Raw HTTP response, same style as streamCamera() above — StatusPage's evidenceProvider
+// bypasses WebServer::send() the same way its streamProvider does. CORS-enabled like
+// /flash, since the Gateway's own dashboard (a different origin) may also want to
+// preview an incident's evidence directly rather than only via the backend.
+static void serveEvidence(WiFiClient client, const String& eventId) {
+    String path = EvidenceManager::imagePath(eventId);
+    if (path.isEmpty()) {
+        client.print("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\nNo image for that eventId");
+        client.stop();
+        return;
+    }
+    File f = SD_MMC.open(path, FILE_READ);
+    if (!f) {
+        client.print("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\nFailed to open image");
+        client.stop();
+        return;
+    }
+
+    client.print("HTTP/1.1 200 OK\r\n"
+                 "Content-Type: image/jpeg\r\n"
+                 "Content-Length: ");
+    client.print(f.size());
+    client.print("\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n");
+
+    uint8_t buffer[1024];
+    while (f.available() && client.connected()) {
+        Watchdog::feed();
+        size_t read = f.read(buffer, sizeof(buffer));
+        if (read == 0) break;
+        client.write(buffer, read);
+    }
+    f.close();
+    client.stop();
 }
 
 static void enterProvisioningMode() {
@@ -586,7 +625,7 @@ void setup() {
     } else if (WiFiManager::isConnected()) {
         Logger::info(TAG, "NETWORK: connected, IP=" + WiFiManager::localIP() +
                      " ssid=" + NetworkConfig::get().ssid);
-        StatusPage::begin("CarSentinel Node " + cfg.nodeId, buildStatusHtml, streamCamera, flashToggle);
+        StatusPage::begin("CarSentinel Node " + cfg.nodeId, buildStatusHtml, streamCamera, flashToggle, serveEvidence);
     } else {
         Logger::warn(TAG, "NETWORK: not connected (no IP) — Wi-Fi will keep retrying in the background");
     }
@@ -617,7 +656,7 @@ void loop() {
         // Covers the case where Wi-Fi wasn't connected yet at boot (setup() only starts
         // the page immediately on a successful connect) but WiFiManager reconnects later.
         if (!StatusPage::isActive() && WiFiManager::isConnected()) {
-            StatusPage::begin("CarSentinel Node " + DeviceConfig::get().nodeId, buildStatusHtml, streamCamera, flashToggle);
+            StatusPage::begin("CarSentinel Node " + DeviceConfig::get().nodeId, buildStatusHtml, streamCamera, flashToggle, serveEvidence);
         }
         StatusPage::loop();
     }

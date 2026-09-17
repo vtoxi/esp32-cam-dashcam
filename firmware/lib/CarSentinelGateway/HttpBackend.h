@@ -21,6 +21,8 @@ public:
     bool sendEvent(const String& jsonPayload) override;
     bool sendIncident(const String& jsonPayload) override;
     bool registerDevice(const String& jsonPayload, String& outResponsePayload) override;
+    bool uploadEvidence(const String& incidentId, const String& nodeId, const String& eventId,
+                         const uint8_t* data, size_t len) override;
     int lastStatusCode() override;
 
 private:

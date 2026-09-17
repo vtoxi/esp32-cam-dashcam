@@ -66,6 +66,7 @@ app.UseAuthorization();
 app.MapIngestEndpoints();
 app.MapQueryEndpoints();
 app.MapStreamEndpoints();
+app.MapCommandEndpoints();
 
 app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
 

@@ -23,6 +23,8 @@ public:
     bool registerDevice(const String& jsonPayload, String& outResponsePayload) override;
     bool uploadEvidence(const String& incidentId, const String& nodeId, const String& eventId,
                          const uint8_t* data, size_t len) override;
+    bool pollCommands(String& outCommandsJson) override;
+    bool reportCommandResult(const String& commandId, const String& jsonResult) override;
     int lastStatusCode() override;
 
 private:
@@ -42,6 +44,10 @@ private:
     // ignores the body, since none of the send* methods need a response beyond
     // success/failure).
     bool post(const String& path, const String& jsonPayload, String* outResponsePayload = nullptr);
+
+    // GETs baseUrl + path with the same auth headers post() uses, returning the
+    // response body via outResponsePayload. Used only by pollCommands() today.
+    bool get(const String& path, String& outResponsePayload);
 };
 
 }  // namespace CarSentinel

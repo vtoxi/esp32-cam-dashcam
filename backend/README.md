@@ -47,6 +47,13 @@ assigns. See `RemoteSyncManager.cpp`'s `attemptRegistration()` for exactly what 
   `HttpBackend.cpp`'s `uploadEvidence()`. `GET .../evidence` lists metadata, `GET
   /api/v1/evidence/{id}/file` serves the bytes. Stored under `evidence/` next to the
   project (gitignored) — a local-disk stand-in for real object storage.
+- `POST /api/v1/devices/{id}/commands` — issue a command, gated by an `X-Admin-Key`
+  header matching the `Admin:ApiKey` config value (**unset by default, which refuses
+  every issue attempt with 503** — set it in `appsettings.json`/an environment
+  variable to enable). `GET .../commands/pending` (device-credential authenticated,
+  a device can only ever poll its own commands) and `POST
+  .../commands/{commandId}/result` are what the gateway calls. `GET
+  /api/v1/devices/{id}/commands` lists history (any status).
 
 ## What's not here yet (see `docs/IMPLEMENTATION_PLAN.md`'s Phase 21 entries)
 
@@ -55,5 +62,6 @@ for this reference implementation, not for a real deployment), no user-facing
 authentication on the read API, no `device.offline` detection (only reacts to a
 heartbeat arriving after a gap, doesn't detect one that stops), no evidence sync-policy
 filtering (every evidenced image uploads whenever the backend is enabled, not filtered
-by `METADATA_ONLY`/etc.), no remote-command relay (Phase 21.8), no webhooks
-(Phase 21.9).
+by `METADATA_ONLY`/etc.), only one real command type wired up on the firmware side
+(`SECURITY_MODE` — others need a matching `else if` in `gateway_main.cpp`'s
+`handleRemoteCommand()`), no webhooks (Phase 21.9).

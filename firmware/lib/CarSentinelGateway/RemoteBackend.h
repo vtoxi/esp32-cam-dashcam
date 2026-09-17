@@ -54,6 +54,21 @@ public:
     virtual bool uploadEvidence(const String& incidentId, const String& nodeId,
                                  const String& eventId, const uint8_t* data, size_t len) = 0;
 
+    // Phase 21.8 — Backend -> Gateway command flow. Polling, not push (see
+    // RemoteSyncManager.h's own note on why). outCommandsJson receives a raw JSON
+    // array (possibly empty, "[]") of {commandId, commandType, payload, expiresAt} —
+    // this interface hands the array back unparsed, same "don't assume the caller's
+    // schema" posture as registerDevice()'s response payload.
+    virtual bool pollCommands(String& outCommandsJson) = 0;
+
+    // Reports what happened after RemoteSyncManager (via its registered
+    // CommandHandler) actually executed a command. Best-effort — if this fails, the
+    // command was still executed locally, it's only the backend's record of it that's
+    // now stale; not retried/queued (same reasoning as uploadEvidence() — a small,
+    // deliberate list of things this phase doesn't durably retry, see
+    // docs/IMPLEMENTATION_PLAN.md's Phase 21.8 entry).
+    virtual bool reportCommandResult(const String& commandId, const String& jsonResult) = 0;
+
     // The last HTTP-ish status code from any of the calls above — lets
     // RemoteSyncManager distinguish "wrong credential" (its own state, AUTH_FAILED)
     // from "server unreachable" (RETRY_BACKOFF), which was an explicitly deferred gap

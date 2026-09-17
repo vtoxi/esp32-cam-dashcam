@@ -462,6 +462,35 @@ static void applyModeChange(SecurityMode mode, bool manual) {
     broadcastModeToAllDevices(mode);
 }
 
+// Phase 21.8 — the one real command this pass wires end to end (per the Phase 21
+// brief's own "possible commands" list: "change security mode" is the simplest to
+// verify correctness for, since applyModeChange() above already exists and already
+// broadcasts to every node). Other listed command types (request snapshot, restart
+// node, request telemetry, trigger OTA, enable/disable device) all have an existing
+// internal function they could map onto the same way — deliberately not wired up this
+// pass; adding another case here is how a future one gets added, not a redesign.
+static bool handleRemoteCommand(const String& commandType, const String& payloadJson, String& outResultJson) {
+    if (commandType == "SECURITY_MODE") {
+        JsonDocument doc;
+        if (deserializeJson(doc, payloadJson) != DeserializationError::Ok) {
+            outResultJson = "{\"error\":\"payload not valid JSON\"}";
+            return false;
+        }
+        String modeStr = doc["mode"] | "";
+        if (modeStr != "DISARMED" && modeStr != "DRIVING" && modeStr != "PARKED" && modeStr != "SERVICE") {
+            outResultJson = "{\"error\":\"unknown mode\"}";
+            return false;
+        }
+        applyModeChange(securityModeFromString(modeStr), true);
+        outResultJson = "{\"appliedMode\":\"" + modeStr + "\"}";
+        return true;
+    }
+
+    Logger::warn(TAG, "Remote command type \"" + commandType + "\" not implemented on this gateway");
+    outResultJson = "{\"error\":\"unsupported commandType\"}";
+    return false;
+}
+
 // Section 25/26: draws one OLED page's content. Deliberately terse (128x64 at text
 // size 1 fits ~8 lines of ~21 chars) — this mirrors buildStatusHtml()/the STATUS
 // command's fields at a glance, not a full replica of either.
@@ -1040,6 +1069,7 @@ void setup() {
     // (LOCAL_ONLY); RemoteSyncManager::begin() with that config is a no-op beyond
     // logging, matching docs/BACKEND.md Section 6's local-first guarantee.
     BackendConfig::begin();
+    RemoteSyncManager::setCommandHandler(handleRemoteCommand);
     RemoteSyncManager::begin();
 
     // docs/NETWORK.md: ESP-NOW is the primary transport and starts unconditionally,

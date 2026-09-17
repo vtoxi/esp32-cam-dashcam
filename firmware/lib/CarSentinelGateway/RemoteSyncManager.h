@@ -64,13 +64,27 @@ public:
     static bool uploadEvidence(const String& incidentId, const String& nodeId,
                                 const String& eventId, const uint8_t* data, size_t len);
 
+    // Phase 21.8 — called from loop() with each pending command's (commandType,
+    // payload) once polled; returns whether it executed successfully and fills
+    // outResultJson with whatever detail is worth reporting back (may be left "{}").
+    // Unset by default — a gateway that never registers a handler still polls (and
+    // logs "no handler registered" for anything that arrives) rather than silently
+    // never checking, so BACKENDSTATUS/logs make an unwired command flow obvious
+    // rather than a mystery.
+    typedef bool (*CommandHandler)(const String& commandType, const String& payloadJson, String& outResultJson);
+    static void setCommandHandler(CommandHandler handler);
+
 private:
     static RemoteBackend* backend;
     static BackendConnectionState state;
     static unsigned long lastHeartbeatMs;
+    static unsigned long lastCommandPollMs;
+    static CommandHandler commandHandler;
     static const unsigned long HEARTBEAT_INTERVAL_MS = 60000;
+    static const unsigned long COMMAND_POLL_INTERVAL_MS = 15000;
 
     static void setState(BackendConnectionState newState);
+    static void pollAndDispatchCommands();
 };
 
 }  // namespace CarSentinel

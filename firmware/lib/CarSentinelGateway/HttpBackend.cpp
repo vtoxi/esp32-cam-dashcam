@@ -143,4 +143,58 @@ bool HttpBackend::uploadEvidence(const String& incidentId, const String& nodeId,
     return false;
 }
 
+bool HttpBackend::get(const String& path, String& outResponsePayload) {
+    if (baseUrl.isEmpty()) {
+        Logger::warn(TAG, "get() called with no baseUrl configured — refusing");
+        lastHttpStatus = 0;
+        return false;
+    }
+
+    String url = baseUrl + path;
+    HTTPClient http;
+    WiFiClientSecure secureClient;
+    WiFiClient plainClient;
+    bool began = url.startsWith("https://") ? (secureClient.setInsecure(), http.begin(secureClient, url))
+                                             : http.begin(plainClient, url);
+    if (!began) {
+        Logger::error(TAG, "Failed to begin HTTP request to " + url);
+        lastHttpStatus = 0;
+        return false;
+    }
+    if (!credential.isEmpty()) {
+        http.addHeader("Authorization", "Bearer " + credential);
+    }
+    if (!deviceId.isEmpty()) {
+        http.addHeader("X-CarSentinel-Device-Id", deviceId);
+    }
+
+    int code = http.GET();
+    lastHttpStatus = code;
+    if (code >= 200 && code < 300) {
+        outResponsePayload = http.getString();
+    }
+    http.end();
+
+    if (code >= 200 && code < 300) {
+        lastSuccessMs = millis();
+        return true;
+    }
+    Logger::warn(TAG, "GET " + path + " failed, HTTP " + String(code));
+    return false;
+}
+
+bool HttpBackend::pollCommands(String& outCommandsJson) {
+    if (deviceId.isEmpty()) {
+        return false;  // can't poll for a device identity we don't have yet
+    }
+    return get("/devices/" + deviceId + "/commands/pending", outCommandsJson);
+}
+
+bool HttpBackend::reportCommandResult(const String& commandId, const String& jsonResult) {
+    if (deviceId.isEmpty()) {
+        return false;
+    }
+    return post("/devices/" + deviceId + "/commands/" + commandId + "/result", jsonResult);
+}
+
 }  // namespace CarSentinel

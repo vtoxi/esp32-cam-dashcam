@@ -29,7 +29,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 18 | Vehicle Integration | Compiles clean (both envs) — capability-gated ignition-sense input drives DRIVING/PARKED when wired; OBD-II/CAN blocked on hardware, not yet started |
 | 19 | Dashboard | Compiles clean (both envs) — gateway-hosted single-page dashboard + JSON API + live camera stream proxy; pending physical bench test |
 | 20 | Vehicle Installation | Planning checklist documented (`docs/wiring/VEHICLE_INSTALLATION.md`) — no firmware component, no physical install has happened |
-| 21 | Remote Backend, API & Hybrid Connectivity | 21.1–21.7 complete: architecture audit, gateway-side backend abstraction, persistent retry queue, device registration/auth, a real ASP.NET Core reference backend (`backend/`), SSE real-time stream, and end-to-end evidence upload (node → gateway → backend, byte-diff verified). Gateway firmware itself still not bench-tested against a live server. 21.8 onward not started |
+| 21 | Remote Backend, API & Hybrid Connectivity | 21.1–21.8 complete: architecture audit, gateway-side backend abstraction, persistent retry queue, device registration/auth, a real ASP.NET Core reference backend (`backend/`), SSE real-time stream, end-to-end evidence upload, and a Backend→Gateway command flow (one real command, SECURITY_MODE, wired end to end). Gateway firmware itself still not bench-tested against a live server. 21.9 onward not started |
 
 ## Phase 0 — Repository & Hardware Discovery
 
@@ -1639,10 +1639,56 @@ from the new `/evidence` route — comfortable margin, no IRAM regression). **Ba
 manually verified end-to-end** (upload → list → download → byte-diff), same "actually
 run it" discipline as every other Phase 21 sub-phase since 21.5.
 
+## Phase 21.8 — Remote Commands (complete)
+
+**Backend → Gateway command flow, polling (not push)** — `RemoteSyncManager` already
+polls for registration/heartbeat on its own timer; adding a persistent connection
+just for commands would be new infrastructure for a use case a short poll interval
+already serves well enough.
+
+**Backend** (`backend/`): `CommandRecord` (`PENDING`/`DELIVERED`/`EXECUTED`/`FAILED`/
+`EXPIRED`/`REJECTED`), three endpoints —
+`POST /api/v1/devices/{id}/commands` (issue; gated by a shared `X-Admin-Key` header
+against `Admin:ApiKey` config, a deliberate placeholder for real user auth per
+Section 11's "never allow arbitrary unauthenticated remote commands" — **locked by
+default**: an unset `Admin:ApiKey` refuses every issue attempt with 503 rather than
+silently accepting unauthenticated commands), `GET .../commands/pending`
+(device-credential authenticated, and the route's `{id}` must equal the
+authenticated device's own ID — a gateway can only ever see/claim its own commands,
+never another device's), `POST .../commands/{commandId}/result` (same per-device
+check). Expired-but-still-`PENDING` commands are swept to `EXPIRED` on each poll.
+
+**Firmware**: `RemoteBackend`/`HttpBackend` gain `pollCommands()`/
+`reportCommandResult()`. `RemoteSyncManager` polls every 15s (more responsive than
+the 60s heartbeat — a command's whole point is getting acted on promptly) once
+registered, parses the returned array, and dispatches each to a registered
+`CommandHandler` — a gateway that never registers one still polls and logs
+"no handler registered" rather than silently never checking. `gateway_main.cpp`
+registers `handleRemoteCommand()`, which wires up **one real command end to end**:
+`SECURITY_MODE` (validates the mode string, calls the existing `applyModeChange()`,
+which already broadcasts to every node — Phase 10). Every other command the Phase 21
+brief's Section 20 lists (snapshot request, node restart, telemetry request, OTA
+trigger, enable/disable) has an existing internal function it could map onto the same
+way; deliberately not wired up this pass — adding another `else if` in
+`handleRemoteCommand()` is how a future one gets added, not a redesign.
+
+**Verified end-to-end** (backend running, curl only — no gateway hardware
+available to actually receive a real `SECURITY_MODE` command): issued a command with
+the admin key (401 without one/with the wrong one), polled it as the target device
+(delivered once, empty on a second poll), reported a result, confirmed the command
+history shows `EXECUTED` with the reported result payload, and confirmed a
+different device's poll attempt against the same command is rejected (401). The
+firmware side (`handleRemoteCommand()`'s `applyModeChange()` call,
+`RemoteSyncManager`'s dispatch loop) is build-verified only — untestable without
+real hardware polling a real backend.
+
+**Build status: both environments compile clean** (gateway Flash 21.1%, node
+unaffected — all Phase 21.8 code is gateway-only).
+
 ## Next Step
 
-Phase 21.8 (Remote Commands) — a secure Backend → Gateway → Node command flow
-(`POST /api/v1/devices/{id}/commands`, polling since RemoteSyncManager already polls
-rather than maintaining a persistent connection). Everything else in the project
-remains independent of Phase 21 and can still be bench-tested in the meantime — Phase
-21 stays purely additive.
+Phase 21.9 (Webhooks) — external event integrations
+(`device.online`/`motion.detected`/`incident.created`/etc., reusing the same event
+taxonomy `EventBroadcaster`'s SSE stream already established in Phase 21.6).
+Everything else in the project remains independent of Phase 21 and can still be
+bench-tested in the meantime — Phase 21 stays purely additive.

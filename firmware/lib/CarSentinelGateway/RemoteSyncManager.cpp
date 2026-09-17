@@ -17,6 +17,8 @@ static unsigned long lastRegistrationAttemptMs = 0;
 RemoteBackend* RemoteSyncManager::backend = nullptr;
 BackendConnectionState RemoteSyncManager::state = BackendConnectionState::LOCAL_ONLY;
 unsigned long RemoteSyncManager::lastHeartbeatMs = 0;
+unsigned long RemoteSyncManager::lastCommandPollMs = 0;
+RemoteSyncManager::CommandHandler RemoteSyncManager::commandHandler = nullptr;
 
 // AUTH_FAILED vs. RETRY_BACKOFF (Phase 21.4 — deferred from 21.2, now possible since
 // HttpBackend exposes the HTTP status code). 401/403 mean the credential itself is
@@ -118,6 +120,64 @@ void RemoteSyncManager::begin() {
     registered = !cfg.deviceId.isEmpty();  // an already-assigned deviceId counts as registered
     lastHeartbeatMs = 0;  // send a heartbeat on the very next loop(), not after a full interval
     lastRegistrationAttemptMs = 0;  // attempt registration on the very next loop() too
+    lastCommandPollMs = 0;  // poll for commands on the very next loop() too
+}
+
+void RemoteSyncManager::setCommandHandler(CommandHandler handler) {
+    commandHandler = handler;
+}
+
+// Phase 21.8 — polls for and dispatches pending commands. Runs on its own interval
+// (15s — more responsive than the 60s heartbeat, since a command's whole point is
+// getting acted on reasonably promptly), independent of registration/heartbeat
+// success on that specific loop() iteration (a command poll failing is logged and
+// retried next interval, same as everything else here — never blocks).
+void RemoteSyncManager::pollAndDispatchCommands() {
+    String commandsJson;
+    if (!backend->pollCommands(commandsJson)) {
+        return;  // logged inside HttpBackend already; nothing more to do this cycle
+    }
+
+    JsonDocument doc;
+    if (deserializeJson(doc, commandsJson) != DeserializationError::Ok) {
+        Logger::warn(TAG, "pollCommands() returned unparseable JSON");
+        return;
+    }
+    JsonArray commands = doc.as<JsonArray>();
+    for (JsonObject cmd : commands) {
+        String commandId = cmd["commandId"] | "";
+        String commandType = cmd["commandType"] | "";
+        String payloadJson;
+        if (!cmd["payload"].isNull()) {
+            serializeJson(cmd["payload"], payloadJson);
+        } else {
+            payloadJson = "{}";
+        }
+        if (commandId.isEmpty() || commandType.isEmpty()) {
+            continue;
+        }
+
+        String resultJson = "{}";
+        bool success = false;
+        if (!commandHandler) {
+            Logger::warn(TAG, "Command " + commandId + " (" + commandType +
+                         ") received but no handler registered — reporting failure");
+        } else {
+            success = commandHandler(commandType, payloadJson, resultJson);
+            Logger::info(TAG, "Command " + commandId + " (" + commandType + "): " +
+                         (success ? "executed" : "failed"));
+        }
+
+        JsonDocument resultDoc;
+        resultDoc["success"] = success;
+        JsonDocument parsedResult;
+        if (deserializeJson(parsedResult, resultJson) == DeserializationError::Ok) {
+            resultDoc["result"] = parsedResult;
+        }
+        String resultPayload;
+        serializeJson(resultDoc, resultPayload);
+        backend->reportCommandResult(commandId, resultPayload);
+    }
 }
 
 void RemoteSyncManager::loop() {
@@ -139,6 +199,12 @@ void RemoteSyncManager::loop() {
     // flush every loop() — flush() itself only actually attempts delivery for items
     // whose backoff timer has elapsed, so this is cheap when nothing is due.
     BackendQueue::flush(backend);
+
+    unsigned long nowForCommands = millis();
+    if (registered && nowForCommands - lastCommandPollMs >= COMMAND_POLL_INTERVAL_MS) {
+        lastCommandPollMs = nowForCommands;
+        pollAndDispatchCommands();
+    }
 
     unsigned long now = millis();
     if (now - lastHeartbeatMs < HEARTBEAT_INTERVAL_MS) {

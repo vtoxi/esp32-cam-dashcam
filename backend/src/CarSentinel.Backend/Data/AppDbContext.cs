@@ -21,6 +21,7 @@ public class AppDbContext : DbContext
     public DbSet<EventRecord> Events => Set<EventRecord>();
     public DbSet<IncidentRecord> Incidents => Set<IncidentRecord>();
     public DbSet<EvidenceRecord> Evidence => Set<EvidenceRecord>();
+    public DbSet<CommandRecord> Commands => Set<CommandRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -30,5 +31,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<EventRecord>().HasIndex(e => e.DeviceId);
         modelBuilder.Entity<IncidentRecord>().HasIndex(i => i.DeviceId);
         modelBuilder.Entity<EvidenceRecord>().HasIndex(e => e.IncidentId);
+        modelBuilder.Entity<CommandRecord>().HasKey(c => c.CommandId);
+        modelBuilder.Entity<CommandRecord>().HasIndex(c => new { c.TargetDeviceId, c.Status });
     }
 }

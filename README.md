@@ -195,12 +195,16 @@ Settings page or `BACKENDCONFIG <mode> <baseUrl> <deviceId> <credential>` over s
 A real reference backend exists at [`backend/`](backend/) — ASP.NET Core 8 + SQLite,
 device registration with per-device credentials (SHA-256 hashed, never a shared global
 key), telemetry/event/incident ingestion (incidents upserted by ID, not appended),
-Swagger UI, manually verified end-to-end. Run it (`cd backend/src/CarSentinel.Backend
-&& dotnet run`) and point a gateway at it — see [backend/README.md](backend/README.md).
-Persisted retry queue (`BackendQueue`) and exponential backoff exist for the
-Gateway↔Backend hop; what's not built yet: WebSocket/SSE real-time push, evidence
-upload, remote commands, and webhooks (Phases 21.6–21.9). See
-[docs/BACKEND.md](docs/BACKEND.md) and [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md).
+Server-Sent Events real-time stream, end-to-end evidence upload (node → gateway →
+backend), a Backend→Gateway remote command flow, and admin-managed webhooks
+(HMAC-signed outbound delivery), Swagger UI, all manually verified end-to-end. Run it
+(`cd backend/src/CarSentinel.Backend && dotnet run`) and point a gateway at it — see
+[backend/README.md](backend/README.md). Persisted retry queue (`BackendQueue`) and
+exponential backoff exist for the Gateway↔Backend hop. What's not built yet: API
+documentation is now written up ([docs/API.md](docs/API.md)); end-to-end testing
+against real hardware (Phase 21.11) remains outstanding. See
+[docs/BACKEND.md](docs/BACKEND.md), [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md),
+and [docs/API.md](docs/API.md).
 
 ## Security
 

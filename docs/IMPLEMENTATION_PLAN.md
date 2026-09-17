@@ -29,7 +29,7 @@ Phases are implemented strictly one at a time, per the project specification (Se
 | 18 | Vehicle Integration | Compiles clean (both envs) — capability-gated ignition-sense input drives DRIVING/PARKED when wired; OBD-II/CAN blocked on hardware, not yet started |
 | 19 | Dashboard | Compiles clean (both envs) — gateway-hosted single-page dashboard + JSON API + live camera stream proxy; pending physical bench test |
 | 20 | Vehicle Installation | Planning checklist documented (`docs/wiring/VEHICLE_INSTALLATION.md`) — no firmware component, no physical install has happened |
-| 21 | Remote Backend, API & Hybrid Connectivity | 21.1–21.9 complete: architecture audit, gateway-side backend abstraction, persistent retry queue, device registration/auth, a real ASP.NET Core reference backend (`backend/`), SSE real-time stream, end-to-end evidence upload, a Backend→Gateway command flow (one real command, SECURITY_MODE, wired end to end), and outbound webhooks (admin-managed subscriptions, HMAC-signed delivery, retry, logging). Gateway firmware itself still not bench-tested against a live server. 21.10–21.11 not started |
+| 21 | Remote Backend, API & Hybrid Connectivity | 21.1–21.10 complete: architecture audit, gateway-side backend abstraction, persistent retry queue, device registration/auth, a real ASP.NET Core reference backend (`backend/`), SSE real-time stream, end-to-end evidence upload, a Backend→Gateway command flow (one real command, SECURITY_MODE, wired end to end), outbound webhooks (admin-managed subscriptions, HMAC-signed delivery, retry, logging), and a standalone API reference doc (`docs/API.md`). Gateway firmware itself still not bench-tested against a live server. 21.11 not started |
 
 ## Phase 0 — Repository & Hardware Discovery
 
@@ -1738,11 +1738,32 @@ delivery attempts.
 **Build status: both environments unaffected** (all Phase 21.9 code is
 backend-only, no firmware changes this sub-phase).
 
+## Phase 21.10 — API Documentation (complete)
+
+**`docs/API.md`** (new) — a standalone reference for every HTTP endpoint shipped
+across 21.2–21.9, independent of the live Swagger UI (which already existed from
+21.5 and documents the same surface interactively): auth conventions (device
+credential vs. admin key vs. anonymous), and a worked `curl` example for every
+endpoint — registration/heartbeat/telemetry/events/incidents/evidence upload, the
+read/query endpoints, the SSE stream, remote commands, and webhooks — plus an
+explicit "what's intentionally not here" section matching `backend/README.md`'s.
+
+No new Swagger annotations were needed beyond what Phases 21.5–21.9 already added
+incrementally (`WithTags`, the `DeviceCredential` security scheme, per-request
+`ExcludeFromDescription()` on the raw-stream/raw-body routes that don't fit
+OpenAPI's request/response model) — this sub-phase's job was writing the example-
+driven reference doc, not restructuring the generated spec.
+
+`README.md` and `backend/README.md` updated to point at it.
+
+**Build status:** no code changes this sub-phase.
+
 ## Next Step
 
-Phase 21.10 (API Documentation) — finalize/expand the Swagger/OpenAPI surface and
-write a standalone `docs/API.md` with example requests for every endpoint shipped
-across 21.2–21.9, then Phase 21.11 (End-to-End Testing) to document/execute whatever
-test matrix is achievable without physical ESP32 hardware. Everything else in the
-project remains independent of Phase 21 and can still be bench-tested in the
-meantime — Phase 21 stays purely additive.
+Phase 21.11 (End-to-End Testing) — document/execute whatever test matrix is
+achievable without physical ESP32 hardware (every backend flow has already been
+curl-verified sub-phase by sub-phase; this pass consolidates that into a single
+test-matrix document and identifies exactly what remains hardware-gated), updating
+`docs/TESTING.md`. This closes out Phase 21. Everything else in the project remains
+independent of Phase 21 and can still be bench-tested in the meantime — Phase 21
+stays purely additive.

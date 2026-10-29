@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "nodeId": "NODE-A1B2C3",
+  "displayName": "NODE-A1B2C3",
+  "role": "UNASSIGNED",
+  "hardwareProfile": "UNKNOWN",
+  "firmwareVersion": "0.1.0-phase1"
+}

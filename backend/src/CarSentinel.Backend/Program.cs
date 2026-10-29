@@ -1,0 +1,100 @@
+using CarSentinel.Backend.Data;
+using CarSentinel.Backend.Endpoints;
+using CarSentinel.Backend.Services;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.EntityFrameworkCore;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// SQLite by default — zero external infrastructure to run this (docs/BACKEND.md's
+// "avoid introducing unnecessary infrastructure"). Override via the
+// ConnectionStrings:Default config key (env var, appsettings, etc.) for a real
+// deployment; nothing above AppDbContext depends on SQLite specifically.
+var connectionString = builder.Configuration.GetConnectionString("Default")
+    ?? "Data Source=carsentinel.db";
+builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlite(connectionString));
+
+builder.Services.AddAuthentication("DeviceCredential")
+    .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions,
+        CarSentinel.Backend.Auth.DeviceCredentialAuthenticationHandler>("DeviceCredential", null);
+builder.Services.AddAuthorization();
+builder.Services.AddSingleton<EventBroadcaster>();
+builder.Services.AddSingleton<EvidenceStorage>();
+builder.Services.AddHttpClient();
+builder.Services.AddSingleton<WebhookDispatcher>();
+
+// Phase 22 — the Angular console (frontend/) runs on its own origin
+// (ng serve's localhost:4200, or wherever a production build is hosted) and
+// talks to this API directly when not proxied. Wide open (any origin, any
+// header) matches this backend's existing reference-implementation posture —
+// no user-account/session/cookie model exists (docs/BACKEND.md's
+// multi-tenant-readiness note), so there's no session state a permissive CORS
+// policy could leak; the real access controls are the device-credential and
+// admin-key checks already on every mutating endpoint, which a browser
+// origin can't bypass. Tighten this to specific origins before a real
+// deployment.
+const string ConsoleCorsPolicy = "console";
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(ConsoleCorsPolicy, policy =>
+        policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+});
+
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
+    {
+        Title = "CarSentinel Backend API",
+        Version = "v1",
+        Description = "Phase 21 reference backend — device registration, telemetry, " +
+            "events, and incident sync for a CarSentinel gateway. See " +
+            "docs/BACKEND.md and docs/REMOTE_ACCESS.md in the main repository.",
+    });
+    c.AddSecurityDefinition("DeviceCredential", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    {
+        Type = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
+        Scheme = "bearer",
+        Description = "Device credential issued by /api/v1/register. Also requires an " +
+            "X-CarSentinel-Device-Id header (Swagger UI's 'Authorize' dialog only " +
+            "covers the bearer token — add the device-id header per request when " +
+            "testing manually).",
+    });
+});
+
+var app = builder.Build();
+
+// EnsureCreated(), not migrations — a deliberate scope cut for this first reference
+// backend (docs/IMPLEMENTATION_PLAN.md's Phase 21.5 entry), not an oversight. Fine for
+// a fresh SQLite file; a real deployment with an existing database and a need to
+// evolve the schema over time should switch to EF migrations before going further.
+using (var scope = app.Services.CreateScope())
+{
+    scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.EnsureCreated();
+}
+
+app.UseSwagger();
+app.UseSwaggerUI(c =>
+{
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "CarSentinel Backend API v1");
+});
+
+app.UseCors(ConsoleCorsPolicy);
+app.UseAuthentication();
+app.UseAuthorization();
+
+// Attach once at startup — every Publish() call site (Ingest/Command endpoints)
+// already feeds SSE subscribers; this makes the same events feed webhook delivery
+// too, with no changes to those call sites (Phase 21.9).
+app.Services.GetRequiredService<WebhookDispatcher>().Attach(app.Services.GetRequiredService<EventBroadcaster>());
+
+app.MapIngestEndpoints();
+app.MapQueryEndpoints();
+app.MapStreamEndpoints();
+app.MapCommandEndpoints();
+app.MapWebhookEndpoints();
+app.MapDeviceEndpoints();
+
+app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
+
+app.Run();

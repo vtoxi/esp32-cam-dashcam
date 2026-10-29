@@ -1,0 +1,22 @@
+{
+  "_comment": "Reference data mirroring firmware/lib/CarSentinelCommon/HardwareProfiles.cpp. Not loaded from disk by firmware — pin tables are compiled in (Section 49 allows board-level pin definitions to require a rebuild). This file exists so the pin data is reviewable without reading C++.",
+  "profileName": "ESP32_S3_N16R8_GATEWAY",
+  "board": "Generic ESP32-S3-N16R8 dev board",
+  "status": "GPIOs are PROPOSED from the board's silkscreen, not yet bench-verified — see docs/wiring/ESP32_S3_GATEWAY.md Section 11 for the required test",
+  "defaultCapabilities": {
+    "camera": false,
+    "sd": false,
+    "rcwl": { "enabled": false },
+    "dht": { "enabled": false },
+    "gps": { "enabled": true, "rxGpio": 17, "txGpio": 18 },
+    "imu": { "enabled": true, "sdaGpio": 8, "sclGpio": 9 },
+    "display": {
+      "enabled": true,
+      "count": 2,
+      "display1SdaGpio": 8,
+      "display1SclGpio": 9,
+      "display2SdaGpio": 10,
+      "display2SclGpio": 11
+    }
+  }
+}

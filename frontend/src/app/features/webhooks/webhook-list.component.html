@@ -1,0 +1,72 @@
+<app-page-header title="Webhooks" subtitle="Deliver events to external systems via signed HTTP POST." icon="link">
+  @if (admin.hasKey()) {
+    <button
+      type="button"
+      class="focus-ring flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-semibold bg-brand-600 hover:bg-brand-500 text-white"
+      (click)="create()"
+    >
+      <app-icon name="plus" class="w-4 h-4" />
+      New subscription
+    </button>
+    <button
+      type="button"
+      class="focus-ring flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium border border-white/10 text-slate-300 hover:bg-white/5"
+      (click)="load()"
+    >
+      <app-icon name="arrow-path" class="w-4 h-4" />
+      Refresh
+    </button>
+  }
+</app-page-header>
+
+<div class="rounded-2xl border border-white/5 bg-surface-400/60 p-5 shadow-panel">
+  @if (!admin.hasKey()) {
+    <app-empty-state icon="key" message="An admin key is required to manage webhooks." hint="Set one in Settings — this endpoint is gated by X-Admin-Key on the backend." />
+    <div class="flex justify-center -mt-6">
+      <a routerLink="/settings" class="focus-ring text-sm text-brand-300 hover:underline">Go to Settings</a>
+    </div>
+  } @else {
+    <app-data-table
+      [columns]="columns"
+      [rows]="rows()"
+      [loading]="loading()"
+      searchPlaceholder="Search webhook URLs…"
+      emptyMessage="No webhook subscriptions yet."
+      emptyIcon="link"
+      [rowKey]="rowKeyFn"
+    >
+      <ng-template appCellTemplate="url" let-row>
+        <span class="font-mono text-xs text-slate-300">{{ row.url }}</span>
+      </ng-template>
+      <ng-template appCellTemplate="eventTypes" let-row>
+        <span class="font-mono text-xs text-slate-400">{{ row.eventTypes }}</span>
+      </ng-template>
+      <ng-template appCellTemplate="enabled" let-row>
+        <app-status-badge [value]="row.enabled ? 'true' : 'false'" [tone]="row.enabled ? 'success' : 'neutral'" />
+      </ng-template>
+      <ng-template appCellTemplate="createdAt" let-row>
+        <span [title]="row.createdAt">{{ row.createdAt | relativeTime }}</span>
+      </ng-template>
+      <ng-template appCellTemplate="actions" let-row>
+        <div class="flex items-center gap-1 justify-end">
+          <button
+            type="button"
+            class="focus-ring p-1.5 rounded-md text-slate-400 hover:text-brand-300 hover:bg-white/5"
+            title="View delivery history"
+            (click)="viewDeliveries(row)"
+          >
+            <app-icon name="eye" class="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            class="focus-ring p-1.5 rounded-md text-slate-400 hover:text-rose-400 hover:bg-white/5"
+            title="Delete subscription"
+            (click)="remove(row)"
+          >
+            <app-icon name="trash" class="w-4 h-4" />
+          </button>
+        </div>
+      </ng-template>
+    </app-data-table>
+  }
+</div>

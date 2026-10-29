@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "ssid": "",
+  "password": "",
+  "hostname": "NODE-A1B2C3",
+  "useStaticIP": false,
+  "staticIP": "",
+  "gateway": "",
+  "subnet": "",
+  "dns": "",
+  "connectTimeoutMs": 15000,
+  "maxRetries": 3,
+  "retryIntervalMs": 5000
+}

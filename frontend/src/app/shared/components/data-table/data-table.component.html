@@ -1,0 +1,125 @@
+<div class="flex flex-col gap-3">
+  <div class="flex items-center justify-between gap-3 flex-wrap">
+    <div class="relative w-full sm:w-80">
+      <app-icon name="magnifying-glass" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+      <input
+        type="text"
+        class="focus-ring w-full rounded-lg border border-white/10 bg-surface-200/60 pl-9 pr-3 py-2 text-sm text-slate-200 placeholder:text-slate-500"
+        [placeholder]="searchPlaceholder"
+        [attr.aria-label]="searchPlaceholder"
+        [value]="search()"
+        (input)="onSearch($any($event.target).value)"
+      />
+    </div>
+    <div class="flex items-center gap-2">
+      <ng-content select="[table-actions]"></ng-content>
+    </div>
+  </div>
+
+  @if (loading) {
+    <div class="flex justify-center py-16">
+      <div class="w-8 h-8 rounded-full border-2 border-brand-400/30 border-t-brand-400 animate-spin"></div>
+    </div>
+  } @else if (sorted().length === 0) {
+    <app-empty-state [icon]="emptyIcon" [message]="emptyMessage" [hint]="emptyHint" />
+  } @else {
+    <div class="overflow-x-auto rounded-xl border border-white/10">
+      <table class="min-w-full divide-y divide-white/10 text-sm">
+        <thead class="bg-surface-200/60">
+          <tr>
+            @for (col of columns; track col.key) {
+              <th
+                scope="col"
+                class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400 select-none"
+                [class.text-right]="col.numeric"
+                [class.cursor-pointer]="col.sortable !== false"
+                [class.hover:text-slate-200]="col.sortable !== false"
+                [class]="col.widthClass"
+                (click)="toggleSort(col)"
+              >
+                <span class="inline-flex items-center gap-1" [class.justify-end]="col.numeric">
+                  {{ col.header }}
+                  @if (col.sortable !== false) {
+                    <app-icon [name]="sortIconFor(col)" class="w-3.5 h-3.5 opacity-70" />
+                  }
+                </span>
+              </th>
+            }
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-white/5">
+          @for (row of paged(); track rowKey(row)) {
+            <tr class="hover:bg-white/[0.03] transition-colors">
+              @for (col of columns; track col.key) {
+                <td class="px-4 py-3 align-middle text-slate-300" [class.text-right]="col.numeric">
+                  @if (templateFor(col.key); as tmpl) {
+                    <ng-container [ngTemplateOutlet]="tmpl" [ngTemplateOutletContext]="{ $implicit: row }" />
+                  } @else {
+                    {{ cellValue(row, col) }}
+                  }
+                </td>
+              }
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <div class="flex items-center justify-between flex-wrap gap-3 text-sm text-slate-400 px-1">
+      <div class="flex items-center gap-2">
+        <span>Rows per page</span>
+        <select
+          class="focus-ring rounded-md border border-white/10 bg-surface-200/60 py-1 px-2 text-slate-200"
+          [value]="pageSize()"
+          (change)="changePageSize(+$any($event.target).value)"
+        >
+          @for (size of pageSizeOptions; track size) {
+            <option [value]="size">{{ size }}</option>
+          }
+        </select>
+      </div>
+      <div class="flex items-center gap-3">
+        <span>{{ rangeStart() }}–{{ rangeEnd() }} of {{ sorted().length }}</span>
+        <div class="flex items-center gap-1">
+          <button
+            type="button"
+            class="focus-ring p-1.5 rounded-md hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent"
+            [disabled]="page() === 0"
+            (click)="goToPage(0)"
+            aria-label="First page"
+          >
+            <app-icon name="chevron-double-left" class="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            class="focus-ring p-1.5 rounded-md hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent"
+            [disabled]="page() === 0"
+            (click)="goToPage(page() - 1)"
+            aria-label="Previous page"
+          >
+            <app-icon name="chevron-left" class="w-4 h-4" />
+          </button>
+          <span class="px-1 tabular-nums">{{ page() + 1 }} / {{ totalPages() }}</span>
+          <button
+            type="button"
+            class="focus-ring p-1.5 rounded-md hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent"
+            [disabled]="page() + 1 >= totalPages()"
+            (click)="goToPage(page() + 1)"
+            aria-label="Next page"
+          >
+            <app-icon name="chevron-right" class="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            class="focus-ring p-1.5 rounded-md hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent"
+            [disabled]="page() + 1 >= totalPages()"
+            (click)="goToPage(totalPages() - 1)"
+            aria-label="Last page"
+          >
+            <app-icon name="chevron-double-right" class="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+</div>

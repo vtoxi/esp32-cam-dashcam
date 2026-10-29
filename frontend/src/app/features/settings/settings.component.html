@@ -1,0 +1,118 @@
+<app-page-header title="Settings" subtitle="Configure how this console talks to the CarSentinel backend." icon="cog-6-tooth" />
+
+<div class="grid gap-6 lg:grid-cols-2">
+  <section class="rounded-2xl border border-white/5 bg-surface-400/60 p-6 shadow-panel">
+    <div class="flex items-center gap-2 mb-1">
+      <app-icon name="server-stack" class="w-4 h-4 text-brand-400" />
+      <h2 class="font-semibold text-white">API Base URL</h2>
+    </div>
+    <p class="text-sm text-slate-400 mb-4">
+      Where this console sends every request. Defaults to <code class="text-xs bg-surface-200/70 px-1.5 py-0.5 rounded">{{ apiConfig.defaultUrl }}</code>,
+      proxied to the backend during local development (see README). Override this to point the console at a
+      different backend instance without a rebuild — stored only in this browser.
+    </p>
+    <div class="flex flex-col gap-3">
+      <input
+        type="text"
+        class="focus-ring w-full rounded-lg border border-white/10 bg-surface-200/60 px-3 py-2 text-sm text-slate-200 font-mono"
+        [(ngModel)]="baseUrlDraft"
+        placeholder="/api/v1"
+      />
+      <div class="flex items-center gap-2 flex-wrap">
+        <button
+          type="button"
+          class="focus-ring px-4 py-2 rounded-lg text-sm font-semibold bg-brand-600 hover:bg-brand-500 text-white transition-colors"
+          (click)="saveBaseUrl()"
+        >
+          Save
+        </button>
+        <button
+          type="button"
+          class="focus-ring px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-white/5"
+          (click)="resetBaseUrl()"
+        >
+          Reset to default
+        </button>
+        <button
+          type="button"
+          class="focus-ring ml-auto flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-white/10 text-slate-300 hover:bg-white/5 disabled:opacity-50"
+          [disabled]="testing()"
+          (click)="testConnection()"
+        >
+          <app-icon name="arrow-path" class="w-4 h-4" [class.animate-spin]="testing()" />
+          Test connection
+        </button>
+      </div>
+      @if (testResult() === 'ok') {
+        <p class="text-sm text-emerald-400 flex items-center gap-1.5">
+          <app-icon name="check" class="w-4 h-4" /> Reached the backend — GET /health responded.
+        </p>
+      } @else if (testResult() === 'fail') {
+        <p class="text-sm text-rose-400 flex items-center gap-1.5">
+          <app-icon name="x-circle" class="w-4 h-4" /> Could not reach the backend at this URL.
+        </p>
+      }
+    </div>
+  </section>
+
+  <section class="rounded-2xl border border-white/5 bg-surface-400/60 p-6 shadow-panel">
+    <div class="flex items-center gap-2 mb-1">
+      <app-icon name="key" class="w-4 h-4 text-brand-400" />
+      <h2 class="font-semibold text-white">Admin Key</h2>
+    </div>
+    <p class="text-sm text-slate-400 mb-4">
+      Gates <span class="text-slate-300">issuing remote commands</span> and
+      <span class="text-slate-300">managing webhook subscriptions</span> — sent as the
+      <code class="text-xs bg-surface-200/70 px-1.5 py-0.5 rounded">X-Admin-Key</code> header, checked against the
+      backend's <code class="text-xs bg-surface-200/70 px-1.5 py-0.5 rounded">Admin:ApiKey</code> configuration.
+      Stored only in this tab's session storage — cleared when you close it, never persisted longer, never sent to
+      anything but the backend above.
+    </p>
+    <div class="flex flex-col gap-3">
+      <input
+        type="password"
+        class="focus-ring w-full rounded-lg border border-white/10 bg-surface-200/60 px-3 py-2 text-sm text-slate-200 font-mono"
+        [(ngModel)]="adminKeyDraft"
+        placeholder="Leave blank to disable admin actions"
+        autocomplete="off"
+      />
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          class="focus-ring px-4 py-2 rounded-lg text-sm font-semibold bg-brand-600 hover:bg-brand-500 text-white transition-colors"
+          (click)="saveAdminKey()"
+        >
+          Save
+        </button>
+        <button
+          type="button"
+          class="focus-ring px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-white/5"
+          (click)="clearAdminKey()"
+        >
+          Clear
+        </button>
+        <span
+          class="ml-auto inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full"
+          [class]="admin.hasKey() ? 'bg-emerald-400/15 text-emerald-400' : 'bg-slate-500/15 text-slate-400'"
+        >
+          <app-icon [name]="admin.hasKey() ? 'check' : 'x-mark'" class="w-3.5 h-3.5" />
+          {{ admin.hasKey() ? 'Admin actions enabled' : 'Admin actions disabled' }}
+        </span>
+      </div>
+    </div>
+  </section>
+</div>
+
+<section class="mt-6 rounded-2xl border border-white/5 bg-surface-400/60 p-6 shadow-panel">
+  <div class="flex items-center gap-2 mb-3">
+    <app-icon name="information-circle" class="w-4 h-4 text-brand-400" />
+    <h2 class="font-semibold text-white">About this console</h2>
+  </div>
+  <p class="text-sm text-slate-400 leading-relaxed">
+    This is a reference operator console for the CarSentinel remote backend (Phase 21 of the project specification)
+    — it reads devices, telemetry, events, and incidents; issues remote commands; and manages webhook subscriptions.
+    It never talks to a gateway or node directly — everything goes through the backend's REST API and Server-Sent
+    Events stream. Device registration, heartbeats, telemetry ingestion, and evidence upload are all
+    firmware-initiated and not performed from this console.
+  </p>
+</section>

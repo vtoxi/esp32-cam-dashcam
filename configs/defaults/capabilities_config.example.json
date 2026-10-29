@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "camera": true,
+  "sd": true,
+  "rcwl": { "enabled": false, "gpio": -1 },
+  "dht": { "enabled": false, "gpio": -1 },
+  "gps": { "enabled": false, "rxGpio": -1, "txGpio": -1 },
+  "imu": { "enabled": false, "sdaGpio": -1, "sclGpio": -1 },
+  "display": {
+    "enabled": false,
+    "count": 0,
+    "display1SdaGpio": -1,
+    "display1SclGpio": -1,
+    "display2SdaGpio": -1,
+    "display2SclGpio": -1
+  }
+}

@@ -1,0 +1,84 @@
+<app-dialog-shell title="Pre-provision device" maxWidthClass="max-w-lg" (dismiss)="dialogRef.close(false)">
+  @if (created(); as result) {
+    <div class="flex items-start gap-2.5 rounded-lg border border-emerald-400/30 bg-emerald-400/10 px-3.5 py-3 mb-4 text-sm text-emerald-300">
+      <app-icon name="check" class="w-4 h-4 mt-0.5 shrink-0" />
+      <span>Device pre-provisioned. Copy both values now — the credential will not be shown again.</span>
+    </div>
+    <div class="flex flex-col gap-3 text-sm">
+      <div>
+        <p class="text-xs text-slate-500 mb-1">Device ID</p>
+        <app-copy-field [value]="result.deviceId" />
+      </div>
+      <div>
+        <p class="text-xs text-slate-500 mb-1">Credential</p>
+        <app-copy-field [value]="result.credential" />
+      </div>
+    </div>
+    <div class="rounded-lg bg-surface-200/60 border border-white/5 px-3.5 py-3 mt-4 text-xs text-slate-400 leading-relaxed">
+      On the physical gateway, open its own dashboard's <span class="text-slate-300">Settings</span> page (or use
+      the <code class="text-slate-300">BACKENDCONFIG</code> serial command) and enter this Device ID and Credential
+      under <span class="text-slate-300">Remote Backend</span> before it registers itself — this lets it join as
+      exactly this pre-provisioned identity instead of generating a new one.
+    </div>
+    <div class="flex justify-end mt-6">
+      <button type="button" class="focus-ring px-4 py-2 rounded-lg text-sm font-semibold bg-brand-600 hover:bg-brand-500 text-white" (click)="done()">
+        Done
+      </button>
+    </div>
+  } @else {
+    <p class="text-xs text-slate-500 mb-4">
+      Generates a device ID and credential before any real hardware registers — useful for handing a known identity
+      to a technician ahead of a physical install. All fields are optional and can be changed later by the device
+      itself once it registers.
+    </p>
+    <div class="flex flex-col gap-4">
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1.5">Hardware profile (optional)</label>
+        <input
+          type="text"
+          class="focus-ring w-full rounded-lg border border-white/10 bg-surface-200/60 px-3 py-2 text-sm text-slate-200 font-mono"
+          [(ngModel)]="hardwareProfile"
+          placeholder="e.g. ESP32_S3_N16R8_GATEWAY"
+        />
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1.5">Node ID (optional)</label>
+        <input
+          type="text"
+          class="focus-ring w-full rounded-lg border border-white/10 bg-surface-200/60 px-3 py-2 text-sm text-slate-200 font-mono"
+          [(ngModel)]="nodeId"
+          placeholder="e.g. GATEWAY-VAN-04"
+        />
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1.5">Tenant ID (optional)</label>
+        <input
+          type="text"
+          class="focus-ring w-full rounded-lg border border-white/10 bg-surface-200/60 px-3 py-2 text-sm text-slate-200 font-mono"
+          [(ngModel)]="tenantId"
+        />
+      </div>
+
+      @if (error()) {
+        <p class="text-sm text-rose-400">{{ error() }}</p>
+      }
+
+      <div class="flex items-center justify-end gap-2 mt-1">
+        <button type="button" class="focus-ring px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-white/5" (click)="dialogRef.close(false)">
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="focus-ring flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-50"
+          [disabled]="submitting()"
+          (click)="submit()"
+        >
+          @if (submitting()) {
+            <span class="w-3.5 h-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin"></span>
+          }
+          Pre-provision
+        </button>
+      </div>
+    </div>
+  }
+</app-dialog-shell>
